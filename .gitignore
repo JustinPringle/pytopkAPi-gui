@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment / secrets
+.env
+*.env
+secrets.toml
+api_keys.json
+
+# Large data files
+*.tif
+*.bil
+*.flt
+*.hdr
+*.h5
+*.hdf5
+*.dat
+*.nc
+
+# Project working directories (user-generated)
+project/
+project_*/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Cache
+.cache/
+bmi_topography_cache/
