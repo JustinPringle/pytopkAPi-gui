@@ -33,11 +33,12 @@ class ProjectState:
     # ── Raster paths ──────────────────────────────────────────────────────────
     dem_path:        Optional[str] = None   # raw downloaded DEM (WGS84)
     proj_dem_path:   Optional[str] = None   # gdalwarp reprojected to CRS
-    filled_dem_path: Optional[str] = None   # pysheds pit/depression/flat filled
-    fdir_path:       Optional[str] = None   # D8 flow direction (GRASS 1-8 coding)
-    accum_path:      Optional[str] = None   # flow accumulation (cells)
+    filled_dem_path: Optional[str] = None   # GRASS r.fill.dir filled DEM
+    fdir_path:       Optional[str] = None   # GRASS r.fill.dir flow direction (1-8)
+    accum_path:      Optional[str] = None   # GRASS r.watershed accumulation (cells)
+    drain_ws_path:   Optional[str] = None   # GRASS r.watershed drainage (for r.water.outlet)
     mask_path:       Optional[str] = None   # catchment mask (1=cell, nodata=255)
-    slope_path:      Optional[str] = None   # slope in degrees (gdaldem)
+    slope_path:      Optional[str] = None   # slope in degrees (r.slope.aspect)
     streamnet_path:  Optional[str] = None   # stream network binary (1=stream, 0=land)
     strahler_path:   Optional[str] = None   # Strahler order raster
 
@@ -148,7 +149,7 @@ class ProjectState:
         """Return True if step idx (0-indexed) has usable outputs."""
         checks = [
             self.dem_path is not None,                                       # 0 Study Area
-            self.filled_dem_path is not None and self.accum_path is not None,# 1 DEM Processing
+            self.filled_dem_path is not None and self.fdir_path is not None,  # 1 DEM Processing
             self.mask_path is not None and self.slope_path is not None,      # 2 Watershed
             self.streamnet_path is not None and self.strahler_path is not None, # 3 Streams
             self.soil_ready,                                                  # 4 Soil

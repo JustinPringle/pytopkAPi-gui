@@ -2,11 +2,12 @@
 gui/panels/p02_dem_processing.py
 =================================
 Step 2 — DEM Processing
-  • Reproject the raw SRTM DEM to the project CRS (calls DemWorker)
-  • Fill sinks / depressions / flats (calls FillWorker task='fill')
-  • Compute flow direction with GRASS recoding (FillWorker task='flowdir')
-  • Compute flow accumulation (FillWorker task='accum')
-  • OR load already-processed rasters directly (GRASS / external output)
+  • Reproject the raw SRTM DEM to the project CRS  (gdalwarp via DemWorker)
+  • OR load an already-projected DEM directly
+  • Fill depressions + compute flow direction + accumulation using GRASS GIS
+      r.fill.dir  → depression-free DEM + flow direction (GRASS 1-8 natively)
+      r.watershed → flow accumulation + drainage direction (for watershed step)
+  • OR load already-processed rasters (skip GRASS if you have them)
 """
 
 import os
@@ -23,7 +24,7 @@ from gui.workers.fill_worker import FillWorker
 
 
 class DEMProcessingPanel(BasePanel):
-    """Panel for Step 2: reproject + fill + flow routing."""
+    """Panel for Step 2: reproject + GRASS fill + flow routing."""
 
     def __init__(self, state, main_window, parent=None):
         super().__init__(state, main_window, parent)
@@ -46,21 +47,24 @@ class DEMProcessingPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
-        # ── Load existing rasters ──────────────────────────────────────────
-        load_box = QGroupBox("Load Existing Rasters")
+        # ── A. Load existing rasters (skip processing) ─────────────────────
+        load_box = QGroupBox("A — Load Existing Rasters  (skip processing)")
         load_form = QFormLayout(load_box)
         load_form.setSpacing(6)
 
-        hint = QLabel("Already have GRASS / external rasters?  Load them here to skip processing.")
+        hint = QLabel(
+            "Already have GRASS-processed rasters?  Load them here and skip "
+            "sections B and C."
+        )
         hint.setStyleSheet("color:#aaa; font-size:11px;")
         hint.setWordWrap(True)
         load_form.addRow("", hint)
 
-        self._load_dem_btn = QPushButton("Browse…  Filled / Processed DEM")
+        self._load_dem_btn = QPushButton("Browse…  Filled / Projected DEM")
         self._load_dem_btn.clicked.connect(self._load_dem)
         load_form.addRow("DEM:", self._load_dem_btn)
 
-        self._load_fdir_btn = QPushButton("Browse…  Flow Direction (GRASS 1-8)")
+        self._load_fdir_btn = QPushButton("Browse…  Flow Direction  (GRASS 1-8)")
         self._load_fdir_btn.clicked.connect(self._load_fdir)
         load_form.addRow("Flow dir:", self._load_fdir_btn)
 
@@ -70,8 +74,8 @@ class DEMProcessingPanel(BasePanel):
 
         layout.addWidget(load_box)
 
-        # ── Reproject group ────────────────────────────────────────────────
-        reproj_box = QGroupBox("Reproject DEM  (from Step 1 download)")
+        # ── B. Reproject ───────────────────────────────────────────────────
+        reproj_box = QGroupBox("B — Reproject DEM  (gdalwarp, from Step 1 download)")
         reproj_form = QFormLayout(reproj_box)
         reproj_form.setSpacing(8)
 
@@ -80,70 +84,62 @@ class DEMProcessingPanel(BasePanel):
         self._reproj_status.setWordWrap(True)
         reproj_form.addRow("Status:", self._reproj_status)
 
-        self._reproj_btn = QPushButton("Reproject DEM →")
+        self._reproj_btn = QPushButton("Reproject DEM →  project CRS")
         self._reproj_btn.setProperty("primary", "true")
         self._reproj_btn.clicked.connect(self._reproject)
         reproj_form.addRow("", self._reproj_btn)
 
         layout.addWidget(reproj_box)
 
-        # ── Fill group ────────────────────────────────────────────────────
-        fill_box = QGroupBox("Fill DEM (pit / depression / flat)")
-        fill_form = QFormLayout(fill_box)
-        fill_form.setSpacing(8)
+        # ── C. GRASS hydrological processing ──────────────────────────────
+        grass_box = QGroupBox("C — GRASS Hydrological Processing  (r.fill.dir + r.watershed)")
+        grass_form = QFormLayout(grass_box)
+        grass_form.setSpacing(8)
 
-        self._fill_status = QLabel("Not yet filled.")
-        self._fill_status.setStyleSheet("color:#aaa; font-size:11px;")
-        fill_form.addRow("Status:", self._fill_status)
+        grass_hint = QLabel(
+            "Runs a single GRASS GIS session:\n"
+            "  • r.fill.dir  — fills depressions, writes flow direction in native "
+            "GRASS 1-8 coding (no recoding needed)\n"
+            "  • r.watershed — D8 flow accumulation + drainage direction "
+            "(saved for watershed delineation in Step 3)"
+        )
+        grass_hint.setStyleSheet("color:#aaa; font-size:11px;")
+        grass_hint.setWordWrap(True)
+        grass_form.addRow("", grass_hint)
 
-        self._fill_btn = QPushButton("Fill DEM")
-        self._fill_btn.setProperty("primary", "true")
-        self._fill_btn.setEnabled(False)
-        self._fill_btn.clicked.connect(self._fill)
-        fill_form.addRow("", self._fill_btn)
+        # Individual output status labels
+        self._grass_filled_lbl = QLabel("Filled DEM:        —")
+        self._grass_filled_lbl.setStyleSheet("font-size:11px; color:#aaa;")
+        grass_form.addRow("", self._grass_filled_lbl)
 
-        layout.addWidget(fill_box)
+        self._grass_fdir_lbl = QLabel("Flow direction:    —")
+        self._grass_fdir_lbl.setStyleSheet("font-size:11px; color:#aaa;")
+        grass_form.addRow("", self._grass_fdir_lbl)
 
-        # ── Flow direction group ──────────────────────────────────────────
-        fdir_box = QGroupBox("Flow Direction")
-        fdir_form = QFormLayout(fdir_box)
-        fdir_form.setSpacing(8)
+        self._grass_accum_lbl = QLabel("Accumulation:      —")
+        self._grass_accum_lbl.setStyleSheet("font-size:11px; color:#aaa;")
+        grass_form.addRow("", self._grass_accum_lbl)
 
-        self._fdir_status = QLabel("Not yet computed.")
-        self._fdir_status.setStyleSheet("color:#aaa; font-size:11px;")
-        fdir_form.addRow("Status:", self._fdir_status)
+        self._grass_drain_lbl = QLabel("Drainage (ws):     —")
+        self._grass_drain_lbl.setStyleSheet("font-size:11px; color:#aaa;")
+        grass_form.addRow("", self._grass_drain_lbl)
 
-        self._fdir_btn = QPushButton("Compute Flow Direction")
-        self._fdir_btn.setProperty("primary", "true")
-        self._fdir_btn.setEnabled(False)
-        self._fdir_btn.clicked.connect(self._flowdir)
-        fdir_form.addRow("", self._fdir_btn)
+        self._grass_btn = QPushButton(
+            "Fill + Flow Direction + Accumulation  (GRASS)"
+        )
+        self._grass_btn.setProperty("primary", "true")
+        self._grass_btn.setEnabled(False)
+        self._grass_btn.clicked.connect(self._run_grass)
+        grass_form.addRow("", self._grass_btn)
 
-        layout.addWidget(fdir_box)
-
-        # ── Flow accumulation group ───────────────────────────────────────
-        accum_box = QGroupBox("Flow Accumulation")
-        accum_form = QFormLayout(accum_box)
-        accum_form.setSpacing(8)
-
-        self._accum_status = QLabel("Not yet computed.")
-        self._accum_status.setStyleSheet("color:#aaa; font-size:11px;")
-        accum_form.addRow("Status:", self._accum_status)
-
-        self._accum_btn = QPushButton("Compute Flow Accumulation")
-        self._accum_btn.setProperty("primary", "true")
-        self._accum_btn.setEnabled(False)
-        self._accum_btn.clicked.connect(self._accum)
-        accum_form.addRow("", self._accum_btn)
-
-        layout.addWidget(accum_box)
+        layout.addWidget(grass_box)
         layout.addStretch()
 
         self.refresh_from_state()
         return self._form
 
     def on_activated(self) -> None:
-        """Show the raster canvas; load the best available raster."""
+        """Show the raster canvas with the best available raster."""
         self._ensure_raster_canvas()
         self._mw.set_raster_widget(self._raster_canvas)
         self._load_available_rasters()
@@ -154,55 +150,44 @@ class DEMProcessingPanel(BasePanel):
             return
         s = self._state
 
-        # Reproject status
+        # ── Reproject status ───────────────────────────────────────────────
         if s.proj_dem_path and os.path.exists(s.proj_dem_path):
             self._reproj_status.setText(f"✅ {os.path.basename(s.proj_dem_path)}")
             self._reproj_status.setStyleSheet("color:#2ecc71; font-size:11px;")
-            self._fill_btn.setEnabled(True)
+            self._grass_btn.setEnabled(True)
         else:
-            self._reproj_status.setText("Not yet reprojected.")
+            self._reproj_status.setText(
+                "Not yet reprojected (or load a DEM in section A above)."
+            )
             self._reproj_status.setStyleSheet("color:#aaa; font-size:11px;")
-            self._fill_btn.setEnabled(s.filled_dem_path is not None)
+            # Still allow GRASS if a filled DEM was loaded directly
+            self._grass_btn.setEnabled(bool(s.filled_dem_path))
 
-        # Fill status
-        if s.filled_dem_path and os.path.exists(s.filled_dem_path):
-            self._fill_status.setText(f"✅ {os.path.basename(s.filled_dem_path)}")
-            self._fill_status.setStyleSheet("color:#2ecc71; font-size:11px;")
-            self._fdir_btn.setEnabled(True)
-            self._accum_btn.setEnabled(True)
-        else:
-            self._fill_status.setText("Not yet filled.")
-            self._fill_status.setStyleSheet("color:#aaa; font-size:11px;")
-            self._fdir_btn.setEnabled(False)
-            self._accum_btn.setEnabled(False)
+        # ── GRASS output status labels ─────────────────────────────────────
+        def _lbl(path, name, lbl_widget):
+            if path and os.path.exists(path):
+                lbl_widget.setText(f"{name}  ✅ {os.path.basename(path)}")
+                lbl_widget.setStyleSheet("font-size:11px; color:#2ecc71;")
+            else:
+                lbl_widget.setText(f"{name}  —")
+                lbl_widget.setStyleSheet("font-size:11px; color:#aaa;")
 
-        # Flow direction status
-        if s.fdir_path and os.path.exists(s.fdir_path):
-            self._fdir_status.setText(f"✅ {os.path.basename(s.fdir_path)}")
-            self._fdir_status.setStyleSheet("color:#2ecc71; font-size:11px;")
-        else:
-            self._fdir_status.setText("Not yet computed.")
-            self._fdir_status.setStyleSheet("color:#aaa; font-size:11px;")
-
-        # Accumulation status
-        if s.accum_path and os.path.exists(s.accum_path):
-            self._accum_status.setText(f"✅ {os.path.basename(s.accum_path)}")
-            self._accum_status.setStyleSheet("color:#2ecc71; font-size:11px;")
-        else:
-            self._accum_status.setText("Not yet computed.")
-            self._accum_status.setStyleSheet("color:#aaa; font-size:11px;")
+        _lbl(s.filled_dem_path, "Filled DEM:       ", self._grass_filled_lbl)
+        _lbl(s.fdir_path,       "Flow direction:   ", self._grass_fdir_lbl)
+        _lbl(s.accum_path,      "Accumulation:     ", self._grass_accum_lbl)
+        _lbl(s.drain_ws_path,   "Drainage (ws):    ", self._grass_drain_lbl)
 
         if self._raster_canvas is not None:
             self._load_available_rasters()
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Load existing rasters
+    # Load existing rasters (section A)
     # ──────────────────────────────────────────────────────────────────────────
 
     def _load_dem(self):
-        path = self._browse_and_set("filled_dem_path", "Filled / Processed DEM")
+        path = self._browse_and_set("filled_dem_path", "Filled / Projected DEM")
         if path:
-            # Also treat it as the projected DEM so downstream steps don't block
+            # Also set proj_dem_path so the GRASS button enables
             self._state.proj_dem_path = path
             self._state.save()
 
@@ -213,7 +198,7 @@ class DEMProcessingPanel(BasePanel):
         self._browse_and_set("accum_path", "Flow Accumulation")
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Raster canvas management
+    # Raster canvas
     # ──────────────────────────────────────────────────────────────────────────
 
     def _ensure_raster_canvas(self):
@@ -224,7 +209,6 @@ class DEMProcessingPanel(BasePanel):
         if self._raster_canvas is None:
             return
         s = self._state
-
         for path, name, cmap, unit in [
             (s.accum_path,      "Flow Accumulation", "Blues",   "cells"),
             (s.fdir_path,       "Flow Direction",    "tab10",   "GRASS code"),
@@ -245,44 +229,29 @@ class DEMProcessingPanel(BasePanel):
             return
         worker = DemWorker(self._state, task="reproject")
         worker.log_message.connect(lambda m: self.log(m))
-        worker.finished.connect(lambda _: self._reproj_btn.setEnabled(True))
+        worker.finished.connect(lambda _: (
+            self._reproj_btn.setEnabled(True),
+            self._grass_btn.setEnabled(True),
+        ))
         worker.error.connect(lambda _: self._reproj_btn.setEnabled(True))
         self._reproj_btn.setEnabled(False)
         self.set_status("Reprojecting DEM…")
         self.start_worker(worker)
 
-    def _fill(self):
-        if not self._state.proj_dem_path:
-            self.log("Reproject the DEM first (or load a DEM above).", "warn")
+    def _run_grass(self):
+        s = self._state
+        if not s.proj_dem_path and not s.filled_dem_path:
+            self.log(
+                "Reproject the DEM first (section B), or load an existing DEM "
+                "in section A.",
+                "warn",
+            )
             return
-        worker = FillWorker(self._state, task="fill")
-        worker.log_message.connect(lambda m: self.log(m))
-        worker.finished.connect(lambda _: self._fill_btn.setEnabled(True))
-        worker.error.connect(lambda _: self._fill_btn.setEnabled(True))
-        self._fill_btn.setEnabled(False)
-        self.set_status("Filling DEM…")
-        self.start_worker(worker)
 
-    def _flowdir(self):
-        if not self._state.filled_dem_path:
-            self.log("Fill the DEM first (or load above).", "warn")
-            return
-        worker = FillWorker(self._state, task="flowdir")
+        worker = FillWorker(self._state, task="grass_all")
         worker.log_message.connect(lambda m: self.log(m))
-        worker.finished.connect(lambda _: self._fdir_btn.setEnabled(True))
-        worker.error.connect(lambda _: self._fdir_btn.setEnabled(True))
-        self._fdir_btn.setEnabled(False)
-        self.set_status("Computing flow direction…")
-        self.start_worker(worker)
-
-    def _accum(self):
-        if not self._state.filled_dem_path:
-            self.log("Fill the DEM first (or load above).", "warn")
-            return
-        worker = FillWorker(self._state, task="accum")
-        worker.log_message.connect(lambda m: self.log(m))
-        worker.finished.connect(lambda _: self._accum_btn.setEnabled(True))
-        worker.error.connect(lambda _: self._accum_btn.setEnabled(True))
-        self._accum_btn.setEnabled(False)
-        self.set_status("Computing flow accumulation…")
+        worker.finished.connect(lambda _: self._grass_btn.setEnabled(True))
+        worker.error.connect(lambda _: self._grass_btn.setEnabled(True))
+        self._grass_btn.setEnabled(False)
+        self.set_status("Running GRASS r.fill.dir + r.watershed…")
         self.start_worker(worker)

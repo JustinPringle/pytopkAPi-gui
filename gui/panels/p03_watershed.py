@@ -3,8 +3,8 @@ gui/panels/p03_watershed.py
 ============================
 Step 3 — Watershed
   • Place outlet marker on interactive Folium map
-  • Delineate catchment (calls WatershedWorker task='delineate')
-  • Compute slope raster (calls WatershedWorker task='slope')
+  • Delineate catchment using GRASS r.water.outlet (WatershedWorker task='delineate')
+  • Compute slope raster using GRASS r.slope.aspect (WatershedWorker task='slope')
   • OR load already-processed mask + slope rasters directly
 """
 
@@ -72,11 +72,16 @@ class WatershedPanel(BasePanel):
         layout.addWidget(load_box)
 
         # ── Outlet group ──────────────────────────────────────────────────
-        outlet_box = QGroupBox("Outlet Point  (for pysheds delineation)")
+        outlet_box = QGroupBox("Outlet Point  (for GRASS r.water.outlet)")
         outlet_form = QFormLayout(outlet_box)
         outlet_form.setSpacing(8)
 
-        hint2 = QLabel("Click the outlet marker tool on the map →\nthen click the stream outlet location.")
+        hint2 = QLabel(
+            "Click the outlet marker tool on the map →\n"
+            "then click the stream outlet location on the map.\n"
+            "The coordinate is converted to the project CRS and passed to "
+            "GRASS r.water.outlet."
+        )
         hint2.setStyleSheet("color:#aaa; font-size:11px;")
         hint2.setWordWrap(True)
         outlet_form.addRow("", hint2)
@@ -88,7 +93,7 @@ class WatershedPanel(BasePanel):
         layout.addWidget(outlet_box)
 
         # ── Delineation group ─────────────────────────────────────────────
-        delin_box = QGroupBox("Catchment Delineation  (pysheds)")
+        delin_box = QGroupBox("Catchment Delineation  (GRASS r.water.outlet)")
         delin_form = QFormLayout(delin_box)
         delin_form.setSpacing(8)
 
@@ -97,7 +102,7 @@ class WatershedPanel(BasePanel):
         self._delin_status.setWordWrap(True)
         delin_form.addRow("Status:", self._delin_status)
 
-        self._delin_btn = QPushButton("Delineate Catchment")
+        self._delin_btn = QPushButton("Delineate Catchment  (GRASS)")
         self._delin_btn.setProperty("primary", "true")
         self._delin_btn.setEnabled(False)
         self._delin_btn.clicked.connect(self._delineate)
@@ -106,7 +111,7 @@ class WatershedPanel(BasePanel):
         layout.addWidget(delin_box)
 
         # ── Slope group ───────────────────────────────────────────────────
-        slope_box = QGroupBox("Slope Raster  (gdaldem)")
+        slope_box = QGroupBox("Slope Raster  (GRASS r.slope.aspect)")
         slope_form = QFormLayout(slope_box)
         slope_form.setSpacing(8)
 
@@ -114,7 +119,7 @@ class WatershedPanel(BasePanel):
         self._slope_status.setStyleSheet("color:#aaa; font-size:11px;")
         slope_form.addRow("Status:", self._slope_status)
 
-        self._slope_btn = QPushButton("Compute Slope")
+        self._slope_btn = QPushButton("Compute Slope  (GRASS)")
         self._slope_btn.setProperty("primary", "true")
         self._slope_btn.setEnabled(False)
         self._slope_btn.clicked.connect(self._slope)
@@ -279,8 +284,12 @@ class WatershedPanel(BasePanel):
         if not self._state.outlet_xy:
             self.log("Place the outlet marker on the map first.", "warn")
             return
-        if not self._state.filled_dem_path:
-            self.log("Load a DEM in Step 2 first.", "warn")
+        if not self._state.filled_dem_path or not self._state.drain_ws_path:
+            self.log(
+                "Run GRASS processing in Step 2 first "
+                "(needs filled DEM + drainage direction).",
+                "warn",
+            )
             return
         worker = WatershedWorker(self._state, task="delineate")
         worker.log_message.connect(lambda m: self.log(m))
