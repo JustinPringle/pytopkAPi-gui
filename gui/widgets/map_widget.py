@@ -16,6 +16,14 @@ Usage:
     html = MapWidget.build_aoi_map(centre=(-29.71, 31.06))
     widget.load_map(html)
     main_window.set_map_widget(widget)
+
+Fix notes:
+    1. Full-screen CSS is injected into every map HTML so the Leaflet
+       map fills 100 % of the QWebEngineView viewport (no white border).
+    2. The JS bridge uses a pending-events queue to handle the async gap
+       between the draw:created Leaflet event and QWebChannel init.
+       Previously `if (!bridge) return;` silently dropped draw events
+       that fired before the bridge was ready.
 """
 
 import json
@@ -24,6 +32,7 @@ import folium
 from folium.plugins import Draw
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QColor
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -55,21 +64,60 @@ class MapBridge(QObject):
             print(f"[MapBridge] onOutletPlaced parse error: {exc}")
 
 
+# ── CSS injected into every Folium map ────────────────────────────────────────
+# Forces the map to fill 100 % of the QWebEngineView viewport.
+# Folium normally creates a div with height:500px or similar; this overrides it.
+_FULLSCREEN_CSS = """<style>
+html, body {
+    height: 100%;
+    width:  100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #1e1e1e;
+}
+.folium-map {
+    position: absolute !important;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width:  100% !important;
+    height: 100% !important;
+}
+/* Hide Leaflet attribution in kiosk-style view */
+.leaflet-control-attribution { font-size: 9px; opacity: 0.6; }
+</style>
+"""
+
 # ── JS snippet injected into every Folium map ──────────────────────────────────
-# This runs after the Leaflet map is initialised and hooks the Draw plugin's
-# draw:created event to call the Python bridge methods.
+# Fixes a race condition: the Leaflet draw:created event can fire *before* the
+# QWebChannel bridge finishes initialising.  We queue any events that arrive
+# before the bridge is ready and replay them once it is.
 _BRIDGE_JS = """
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
 (function() {
+    // Bridge object — set once QWebChannel init callback fires.
+    var bridge = null;
+    // Queue of {fn} calls that arrived before the bridge was ready.
+    var pendingCalls = [];
+
+    function flushPending() {
+        var calls = pendingCalls.splice(0);
+        calls.forEach(function(fn) { fn(); });
+    }
+
     // Initialise the QWebChannel connection to Python
-    var bridge;
     new QWebChannel(qt.webChannelTransport, function(channel) {
         bridge = channel.objects.bridge;
+        flushPending();   // replay any draw events that arrived early
     });
 
-    // Wait for the Leaflet map to exist in the global scope.
-    // Folium registers the map as a global variable named map_<hash>.
+    // Deliver a call now if bridge is ready, otherwise queue it.
+    function sendOrQueue(fn) {
+        if (bridge) { fn(); } else { pendingCalls.push(fn); }
+    }
+
+    // Wait for the Leaflet map to appear in the global scope.
+    // Folium registers each map as a global named map_<hash>.
     function findLeafletMap() {
         var keys = Object.keys(window);
         for (var i = 0; i < keys.length; i++) {
@@ -88,23 +136,21 @@ _BRIDGE_JS = """
             return;
         }
         m.on('draw:created', function(e) {
-            if (!bridge) return;
             var layer = e.layer;
             var type  = e.layerType;
             if (type === 'rectangle') {
                 var b = layer.getBounds();
-                bridge.onBboxDrawn(JSON.stringify({
+                var payload = JSON.stringify({
                     south: b.getSouth(),
                     north: b.getNorth(),
                     west:  b.getWest(),
                     east:  b.getEast()
-                }));
+                });
+                sendOrQueue(function() { bridge.onBboxDrawn(payload); });
             } else if (type === 'marker') {
                 var ll = layer.getLatLng();
-                bridge.onOutletPlaced(JSON.stringify({
-                    lat: ll.lat,
-                    lon: ll.lng
-                }));
+                var payload = JSON.stringify({ lat: ll.lat, lon: ll.lng });
+                sendOrQueue(function() { bridge.onOutletPlaced(payload); });
             }
         });
     }
@@ -128,9 +174,17 @@ class MapWidget(QWebEngineView):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Enable local content access needed for qrc:// resources
+        # Dark background so there's no white flash before the map loads
+        self.page().setBackgroundColor(QColor("#1e1e1e"))
+
+        # Allow local content to access remote tile servers AND qrc:// scripts
         settings = self.page().settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True
+        )
 
         # Set up the QWebChannel
         self._bridge  = MapBridge()
@@ -145,10 +199,10 @@ class MapWidget(QWebEngineView):
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def load_map(self, html: str) -> None:
-        """Inject the QWebChannel bridge script and load the Folium HTML."""
-        injected = self._inject_bridge(html)
-        # Use setHtml with a base URL so qrc:// references resolve
-        self.setHtml(injected, baseUrl=QUrl("qrc:///"))
+        """Inject CSS + QWebChannel bridge script and load the Folium HTML."""
+        processed = self._add_fullscreen_css(html)
+        processed = self._inject_bridge(processed)
+        self.setHtml(processed, baseUrl=QUrl("qrc:///"))
 
     # ── Static map builders ────────────────────────────────────────────────────
 
@@ -174,17 +228,17 @@ class MapWidget(QWebEngineView):
         # Draw plugin — rectangle only
         Draw(
             draw_options={
-                "rectangle":   {"shapeOptions": {"color": "#1a6fc4"}},
-                "polyline":    False,
-                "polygon":     False,
-                "circle":      False,
-                "marker":      False,
-                "circlemarker":False,
+                "rectangle":    {"shapeOptions": {"color": "#1a6fc4"}},
+                "polyline":     False,
+                "polygon":      False,
+                "circle":       False,
+                "marker":       False,
+                "circlemarker": False,
             },
             edit_options={"edit": False, "remove": True},
         ).add_to(m)
 
-        # Show any existing bbox
+        # Show any previously saved bbox
         if existing_bbox:
             b = existing_bbox
             folium.Rectangle(
@@ -221,12 +275,12 @@ class MapWidget(QWebEngineView):
         # Draw plugin — marker only
         Draw(
             draw_options={
-                "marker":      True,
-                "rectangle":   False,
-                "polyline":    False,
-                "polygon":     False,
-                "circle":      False,
-                "circlemarker":False,
+                "marker":       True,
+                "rectangle":    False,
+                "polyline":     False,
+                "polygon":      False,
+                "circle":       False,
+                "circlemarker": False,
             },
             edit_options={"edit": False, "remove": True},
         ).add_to(m)
@@ -258,9 +312,16 @@ class MapWidget(QWebEngineView):
     # ── Private helpers ────────────────────────────────────────────────────────
 
     @staticmethod
+    def _add_fullscreen_css(html: str) -> str:
+        """Inject CSS so the Leaflet map fills 100 % of the viewport."""
+        if "<head>" in html:
+            return html.replace("<head>", "<head>\n" + _FULLSCREEN_CSS, 1)
+        # Fallback: prepend at start
+        return _FULLSCREEN_CSS + html
+
+    @staticmethod
     def _inject_bridge(html: str) -> str:
         """Insert the QWebChannel bridge script before </body>."""
         if "</body>" in html:
             return html.replace("</body>", _BRIDGE_JS + "\n</body>", 1)
-        # Fallback: append at end
         return html + _BRIDGE_JS
