@@ -128,4 +128,5 @@ class SoilWorker(BaseWorker):
 
         self.progress.emit(100)
         self.log_message.emit("Soil parameter rasters written.")
+        result_paths["soil_ready"] = True
         self.finished.emit(result_paths)

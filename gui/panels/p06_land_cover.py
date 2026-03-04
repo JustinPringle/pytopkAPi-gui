@@ -5,11 +5,11 @@ Step 6 — Land Cover
   • Optionally browse to a land cover GeoTIFF
   • Set overland Manning n_o (uniform or per land cover class)
   • Generate n_o raster (LandCoverWorker task='generate')
+  • OR load an already-generated Manning n_o raster directly
 """
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -41,8 +41,24 @@ class LandCoverPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
+        # ── Load existing n_o raster ───────────────────────────────────────
+        load_box = QGroupBox("Load Existing Manning n_o Raster")
+        load_form = QFormLayout(load_box)
+        load_form.setSpacing(6)
+
+        hint_load = QLabel("Already have a Manning n_o GeoTIFF?  Load it directly.")
+        hint_load.setStyleSheet("color:#aaa; font-size:11px;")
+        hint_load.setWordWrap(True)
+        load_form.addRow("", hint_load)
+
+        self._load_no_btn = QPushButton("Browse…  Manning n_o Raster")
+        self._load_no_btn.clicked.connect(self._load_mannings)
+        load_form.addRow("n_o file:", self._load_no_btn)
+
+        layout.addWidget(load_box)
+
         # ── Land cover file (optional) ─────────────────────────────────
-        lc_box = QGroupBox("Land Cover Raster (optional)")
+        lc_box = QGroupBox("Land Cover Raster (optional — for per-class n_o)")
         lc_form = QFormLayout(lc_box)
         lc_form.setSpacing(8)
 
@@ -69,7 +85,7 @@ class LandCoverPanel(BasePanel):
         layout.addWidget(lc_box)
 
         # ── Uniform n_o ────────────────────────────────────────────────
-        no_box = QGroupBox("Manning Overland Roughness (n_o)")
+        no_box = QGroupBox("Generate Manning n_o Raster")
         no_form = QFormLayout(no_box)
         no_form.setSpacing(8)
 
@@ -123,6 +139,15 @@ class LandCoverPanel(BasePanel):
             self._gen_status.setText("Not yet generated.")
             self._gen_status.setStyleSheet("color:#aaa; font-size:11px;")
 
+    # ── Load existing ─────────────────────────────────────────────────────
+
+    def _load_mannings(self):
+        def _after(path):
+            self._state.landcover_ready = True
+        self._browse_and_set("mannings_path", "Manning n_o Raster", post_fn=_after)
+
+    # ── Browse + generate ─────────────────────────────────────────────────
+
     def _browse_lc(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Land Cover GeoTIFF", os.path.expanduser("~"),
@@ -134,7 +159,7 @@ class LandCoverPanel(BasePanel):
 
     def _generate(self):
         if not self._state.mask_path:
-            self.log("Delineate catchment (Step 3) first.", "warn")
+            self.log("Load or delineate catchment mask (Step 3) first.", "warn")
             return
 
         lc_path = self._lc_edit.text().strip() or None
@@ -145,7 +170,7 @@ class LandCoverPanel(BasePanel):
         worker = LandCoverWorker(
             self._state,
             task="generate",
-            n_o_table=None,          # no per-class table for now
+            n_o_table=None,
             uniform_n_o=uniform_n_o,
         )
         worker.log_message.connect(lambda m: self.log(m))

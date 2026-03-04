@@ -6,12 +6,11 @@ Step 2 — DEM Processing
   • Fill sinks / depressions / flats (calls FillWorker task='fill')
   • Compute flow direction with GRASS recoding (FillWorker task='flowdir')
   • Compute flow accumulation (FillWorker task='accum')
-  • Display rasters in the shared RasterCanvas
+  • OR load already-processed rasters directly (GRASS / external output)
 """
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFormLayout, QGroupBox, QLabel,
     QPushButton, QVBoxLayout, QWidget,
@@ -47,8 +46,32 @@ class DEMProcessingPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
+        # ── Load existing rasters ──────────────────────────────────────────
+        load_box = QGroupBox("Load Existing Rasters")
+        load_form = QFormLayout(load_box)
+        load_form.setSpacing(6)
+
+        hint = QLabel("Already have GRASS / external rasters?  Load them here to skip processing.")
+        hint.setStyleSheet("color:#aaa; font-size:11px;")
+        hint.setWordWrap(True)
+        load_form.addRow("", hint)
+
+        self._load_dem_btn = QPushButton("Browse…  Filled / Processed DEM")
+        self._load_dem_btn.clicked.connect(self._load_dem)
+        load_form.addRow("DEM:", self._load_dem_btn)
+
+        self._load_fdir_btn = QPushButton("Browse…  Flow Direction (GRASS 1-8)")
+        self._load_fdir_btn.clicked.connect(self._load_fdir)
+        load_form.addRow("Flow dir:", self._load_fdir_btn)
+
+        self._load_accum_btn = QPushButton("Browse…  Flow Accumulation")
+        self._load_accum_btn.clicked.connect(self._load_accum)
+        load_form.addRow("Accum:", self._load_accum_btn)
+
+        layout.addWidget(load_box)
+
         # ── Reproject group ────────────────────────────────────────────────
-        reproj_box = QGroupBox("Reproject DEM")
+        reproj_box = QGroupBox("Reproject DEM  (from Step 1 download)")
         reproj_form = QFormLayout(reproj_box)
         reproj_form.setSpacing(8)
 
@@ -139,7 +162,7 @@ class DEMProcessingPanel(BasePanel):
         else:
             self._reproj_status.setText("Not yet reprojected.")
             self._reproj_status.setStyleSheet("color:#aaa; font-size:11px;")
-            self._fill_btn.setEnabled(False)
+            self._fill_btn.setEnabled(s.filled_dem_path is not None)
 
         # Fill status
         if s.filled_dem_path and os.path.exists(s.filled_dem_path):
@@ -169,9 +192,25 @@ class DEMProcessingPanel(BasePanel):
             self._accum_status.setText("Not yet computed.")
             self._accum_status.setStyleSheet("color:#aaa; font-size:11px;")
 
-        # Reload rasters if the canvas is already showing
         if self._raster_canvas is not None:
             self._load_available_rasters()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Load existing rasters
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _load_dem(self):
+        path = self._browse_and_set("filled_dem_path", "Filled / Processed DEM")
+        if path:
+            # Also treat it as the projected DEM so downstream steps don't block
+            self._state.proj_dem_path = path
+            self._state.save()
+
+    def _load_fdir(self):
+        self._browse_and_set("fdir_path", "Flow Direction (GRASS 1-8)")
+
+    def _load_accum(self):
+        self._browse_and_set("accum_path", "Flow Accumulation")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Raster canvas management
@@ -185,7 +224,6 @@ class DEMProcessingPanel(BasePanel):
         if self._raster_canvas is None:
             return
         s = self._state
-        added = False
 
         for path, name, cmap, unit in [
             (s.accum_path,      "Flow Accumulation", "Blues",   "cells"),
@@ -195,24 +233,16 @@ class DEMProcessingPanel(BasePanel):
         ]:
             if path and os.path.exists(path):
                 self._raster_canvas.show_file(path, title=name, cmap=cmap, unit=unit)
-                added = True
-                break   # show the most-processed one by default
-
-        if not added:
-            self._raster_canvas.clear()
+                break
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Button slots
+    # Process buttons
     # ──────────────────────────────────────────────────────────────────────────
 
     def _reproject(self):
         if not self._state.dem_path:
             self.log("Download a DEM in Step 1 first.", "warn")
             return
-        if not self._state.crs:
-            self.log("Set the project CRS in Step 1 first.", "warn")
-            return
-
         worker = DemWorker(self._state, task="reproject")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._reproj_btn.setEnabled(True))
@@ -223,9 +253,8 @@ class DEMProcessingPanel(BasePanel):
 
     def _fill(self):
         if not self._state.proj_dem_path:
-            self.log("Reproject the DEM first.", "warn")
+            self.log("Reproject the DEM first (or load a DEM above).", "warn")
             return
-
         worker = FillWorker(self._state, task="fill")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._fill_btn.setEnabled(True))
@@ -236,9 +265,8 @@ class DEMProcessingPanel(BasePanel):
 
     def _flowdir(self):
         if not self._state.filled_dem_path:
-            self.log("Fill the DEM first.", "warn")
+            self.log("Fill the DEM first (or load above).", "warn")
             return
-
         worker = FillWorker(self._state, task="flowdir")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._fdir_btn.setEnabled(True))
@@ -249,9 +277,8 @@ class DEMProcessingPanel(BasePanel):
 
     def _accum(self):
         if not self._state.filled_dem_path:
-            self.log("Fill the DEM first.", "warn")
+            self.log("Fill the DEM first (or load above).", "warn")
             return
-
         worker = FillWorker(self._state, task="accum")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._accum_btn.setEnabled(True))

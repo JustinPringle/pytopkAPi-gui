@@ -2,15 +2,12 @@
 gui/panels/p05_soil_params.py
 ==============================
 Step 5 — Soil Parameters
-  • Browse to HWSD GeoTIFF
-  • Identify soil codes in catchment (SoilWorker task='identify')
-  • Edit parameters in SoilTableWidget
-  • Generate soil rasters (SoilWorker task='generate')
+  • Browse to HWSD GeoTIFF → identify soil codes → edit table → generate rasters
+  • OR load already-generated soil rasters directly
 """
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
@@ -25,9 +22,18 @@ from gui.workers.soil_worker import SoilWorker
 class SoilParametersPanel(BasePanel):
     """Panel for Step 5: HWSD identification + soil raster generation."""
 
+    _SOIL_FIELDS = [
+        ("Soil Depth (m)",            "soil_depth_path"),
+        ("Ks — sat. cond. (m/s)",     "hwsd_ks_path"),
+        ("θs — sat. moisture",         "hwsd_theta_path"),
+        ("θr — resid. moisture",       "hwsd_theta_r_path"),
+        ("ψb — bubbling press. (cm)", "hwsd_psi_b_path"),
+    ]
+
     def __init__(self, state, main_window, parent=None):
         super().__init__(state, main_window, parent)
         self._raster_canvas: RasterCanvas | None = None
+        self._soil_load_labels: dict[str, QLabel] = {}
 
     def build_form(self) -> QWidget:
         if self._form is not None:
@@ -42,8 +48,34 @@ class SoilParametersPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
+        # ── Load existing soil rasters ─────────────────────────────────────
+        load_box = QGroupBox("Load Existing Soil Rasters")
+        load_form = QFormLayout(load_box)
+        load_form.setSpacing(5)
+
+        hint = QLabel("Already have soil rasters?  Browse for each file, "
+                      "then click 'Mark as Complete'.")
+        hint.setStyleSheet("color:#aaa; font-size:11px;")
+        hint.setWordWrap(True)
+        load_form.addRow("", hint)
+
+        for label, attr in self._SOIL_FIELDS:
+            btn = QPushButton(f"Browse…  {label}")
+            btn.clicked.connect(lambda _chk, a=attr, l=label: self._browse_and_set(a, l))
+            load_form.addRow("", btn)
+            lbl = QLabel("")
+            lbl.setStyleSheet("font-size:10px; color:#2ecc71; margin-left:8px;")
+            self._soil_load_labels[attr] = lbl
+            load_form.addRow("", lbl)
+
+        self._mark_complete_btn = QPushButton("Mark Soil Step as Complete  ✅")
+        self._mark_complete_btn.clicked.connect(self._mark_complete)
+        load_form.addRow("", self._mark_complete_btn)
+
+        layout.addWidget(load_box)
+
         # ── HWSD path group ───────────────────────────────────────────────
-        hwsd_box = QGroupBox("HWSD Raster")
+        hwsd_box = QGroupBox("HWSD Raster  (identify + generate from scratch)")
         hwsd_form = QFormLayout(hwsd_box)
         hwsd_form.setSpacing(8)
 
@@ -74,7 +106,6 @@ class SoilParametersPanel(BasePanel):
         self._soil_table = SoilTableWidget()
         table_layout.addWidget(self._soil_table)
 
-        # Pre-populate if codes known
         if self._state.hwsd_codes:
             self._soil_table.load_codes(
                 self._state.hwsd_codes,
@@ -124,7 +155,20 @@ class SoilParametersPanel(BasePanel):
             self._soil_table.load_codes(s.hwsd_codes, overrides=s.hwsd_param_overrides)
             self._gen_btn.setEnabled(True)
 
-        if s.soil_depth_path and os.path.exists(s.soil_depth_path):
+        # Update per-raster status labels in the "Load existing" section
+        for label, attr in self._SOIL_FIELDS:
+            lbl  = self._soil_load_labels.get(attr)
+            path = getattr(s, attr, None)
+            if lbl:
+                if path and os.path.exists(path):
+                    lbl.setText(f"  ✅ {os.path.basename(path)}")
+                else:
+                    lbl.setText("")
+
+        if s.soil_ready:
+            self._gen_status.setText("✅ Soil step complete.")
+            self._gen_status.setStyleSheet("color:#2ecc71; font-size:11px;")
+        elif s.soil_depth_path and os.path.exists(s.soil_depth_path):
             self._gen_status.setText("✅ Soil rasters generated.")
             self._gen_status.setStyleSheet("color:#2ecc71; font-size:11px;")
         else:
@@ -146,6 +190,14 @@ class SoilParametersPanel(BasePanel):
             if path and os.path.exists(path):
                 self._raster_canvas.show_file(path, title=name, cmap=cmap, unit=unit)
                 break
+
+    def _mark_complete(self):
+        """Mark soil step as ready (for when all rasters were loaded externally)."""
+        self._state.soil_ready = True
+        self._state.save()
+        self.refresh_from_state()
+        self._mw.refresh_workflow_list()
+        self.log("Soil step marked as complete.", "ok")
 
     def _browse_hwsd(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -186,13 +238,17 @@ class SoilParametersPanel(BasePanel):
         if not params:
             self.log("No soil parameters in table.", "warn")
             return
-        # Save overrides to state for persistence
         self._state.hwsd_param_overrides = {str(k): v for k, v in params.items()}
 
         worker = SoilWorker(self._state, task="generate", hwsd_params=params)
         worker.log_message.connect(lambda m: self.log(m))
-        worker.finished.connect(lambda _: self._gen_btn.setEnabled(True))
+        worker.finished.connect(self._on_generate_finished)
         worker.error.connect(lambda _: self._gen_btn.setEnabled(True))
         self._gen_btn.setEnabled(False)
         self.set_status("Generating soil rasters…")
         self.start_worker(worker)
+
+    def _on_generate_finished(self, updates: dict):
+        self._gen_btn.setEnabled(True)
+        if updates.get("soil_depth_path") and os.path.exists(updates["soil_depth_path"]):
+            self._state.soil_ready = True

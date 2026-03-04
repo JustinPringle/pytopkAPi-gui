@@ -5,12 +5,11 @@ Step 4 — Stream Network
   • Set accumulation threshold for stream extraction
   • Extract binary stream raster (StreamWorker task='extract')
   • Compute Strahler ordering (StreamWorker task='strahler')
-  • Display in shared RasterCanvas
+  • OR load already-processed stream / Strahler rasters directly
 """
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFormLayout, QGroupBox, QLabel,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
@@ -41,16 +40,36 @@ class StreamNetworkPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
+        # ── Load existing rasters ──────────────────────────────────────────
+        load_box = QGroupBox("Load Existing Rasters")
+        load_form = QFormLayout(load_box)
+        load_form.setSpacing(6)
+
+        hint = QLabel("Already have GRASS stream network and Strahler rasters?  Load them here.")
+        hint.setStyleSheet("color:#aaa; font-size:11px;")
+        hint.setWordWrap(True)
+        load_form.addRow("", hint)
+
+        self._load_stream_btn = QPushButton("Browse…  Stream Network (binary)")
+        self._load_stream_btn.clicked.connect(self._load_streamnet)
+        load_form.addRow("Stream net:", self._load_stream_btn)
+
+        self._load_strahler_btn = QPushButton("Browse…  Strahler Orders")
+        self._load_strahler_btn.clicked.connect(self._load_strahler)
+        load_form.addRow("Strahler:", self._load_strahler_btn)
+
+        layout.addWidget(load_box)
+
         # ── Threshold group ───────────────────────────────────────────────
-        thresh_box = QGroupBox("Stream Extraction Threshold")
+        thresh_box = QGroupBox("Stream Extraction  (pysheds)")
         thresh_form = QFormLayout(thresh_box)
         thresh_form.setSpacing(8)
 
-        hint = QLabel("Minimum flow accumulation (cells) to define a stream.\n"
-                      "Smaller values → denser network.")
-        hint.setStyleSheet("color:#aaa; font-size:11px;")
-        hint.setWordWrap(True)
-        thresh_form.addRow("", hint)
+        hint2 = QLabel("Minimum flow accumulation (cells) to define a stream.\n"
+                       "Smaller values → denser network.")
+        hint2.setStyleSheet("color:#aaa; font-size:11px;")
+        hint2.setWordWrap(True)
+        thresh_form.addRow("", hint2)
 
         self._thresh_spin = QSpinBox()
         self._thresh_spin.setRange(10, 100000)
@@ -71,7 +90,7 @@ class StreamNetworkPanel(BasePanel):
         layout.addWidget(thresh_box)
 
         # ── Strahler group ────────────────────────────────────────────────
-        order_box = QGroupBox("Strahler Stream Ordering")
+        order_box = QGroupBox("Strahler Stream Ordering  (pysheds)")
         order_form = QFormLayout(order_box)
         order_form.setSpacing(8)
 
@@ -122,12 +141,24 @@ class StreamNetworkPanel(BasePanel):
         if self._raster_canvas is not None:
             self._load_available_rasters()
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Load existing rasters
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _load_streamnet(self):
+        self._browse_and_set("streamnet_path", "Stream Network (binary)")
+
+    def _load_strahler(self):
+        self._browse_and_set("strahler_path", "Strahler Orders")
+
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _load_available_rasters(self):
         if self._raster_canvas is None:
             return
         s = self._state
         for path, name, cmap, unit in [
-            (s.strahler_path,  "Strahler Order", "tab10",  "order"),
+            (s.strahler_path,  "Strahler Order", "tab10", "order"),
             (s.streamnet_path, "Stream Network", "Blues",  "binary"),
         ]:
             if path and os.path.exists(path):
@@ -139,7 +170,7 @@ class StreamNetworkPanel(BasePanel):
 
     def _extract(self):
         if not self._state.accum_path:
-            self.log("Flow accumulation not found. Complete Step 2 first.", "warn")
+            self.log("Flow accumulation not found. Load or compute in Step 2 first.", "warn")
             return
         worker = StreamWorker(self._state, task="extract")
         worker.log_message.connect(lambda m: self.log(m))
@@ -151,7 +182,7 @@ class StreamNetworkPanel(BasePanel):
 
     def _strahler(self):
         if not self._state.streamnet_path:
-            self.log("Extract the stream network first.", "warn")
+            self.log("Extract or load the stream network first.", "warn")
             return
         worker = StreamWorker(self._state, task="strahler")
         worker.log_message.connect(lambda m: self.log(m))

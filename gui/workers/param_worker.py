@@ -27,7 +27,7 @@ class ParamWorker(BaseWorker):
             self.error.emit(f"[ParamWorker] {exc}")
 
     def _generate(self):
-        import create_file  # from vendor/ via sys.path
+        from pytopkapi.parameter_utils import create_file
 
         state = self._state
         param_dir = os.path.join(state.project_dir, "parameter_files")
@@ -52,13 +52,20 @@ class ParamWorker(BaseWorker):
             self.error.emit("Missing required rasters:\n  " + "\n  ".join(missing))
             return
 
-        self.log_message.emit("Writing param_setup.ini…")
-        self.progress.emit(15)
+        cell_param_path  = os.path.join(param_dir, "cell_param.dat")
+        global_param_path = os.path.join(param_dir, "global_param.dat")
+        ini_path          = os.path.join(param_dir, "TOPKAPI.ini")
+        setup_path        = os.path.join(param_dir, "param_setup.ini")
+
+        # ── Write global_param.dat ────────────────────────────────────────
+        self.log_message.emit("Writing global_param.dat…")
+        self.progress.emit(10)
+        self._write_global_param(global_param_path, state)
+        self.log_message.emit(f"global_param.dat written: {global_param_path}")
 
         # ── Write param_setup.ini ─────────────────────────────────────────
-        cell_param_path = os.path.join(param_dir, "cell_param.dat")
-        ini_path        = os.path.join(param_dir, "TOPKAPI.ini")
-        setup_path      = os.path.join(param_dir, "param_setup.ini")
+        self.log_message.emit("Writing param_setup.ini…")
+        self.progress.emit(20)
 
         cfg = ConfigParser()
         cfg["raster_files"] = {
@@ -98,57 +105,84 @@ class ParamWorker(BaseWorker):
             return
 
         self.log_message.emit(f"cell_param.dat written: {cell_param_path}")
-        self.progress.emit(70)
+        self.progress.emit(75)
 
         # ── Write TOPKAPI.ini ─────────────────────────────────────────────
         self.log_message.emit("Writing TOPKAPI.ini…")
-        self._write_topkapi_ini(ini_path, cell_param_path, state)
+        self._write_topkapi_ini(ini_path, cell_param_path, global_param_path, state)
         self.progress.emit(100)
         self.log_message.emit(f"TOPKAPI.ini written: {ini_path}")
 
         self.finished.emit({
-            "param_setup_path": setup_path,
-            "cell_param_path":  cell_param_path,
-            "ini_path":         ini_path,
+            "param_setup_path":  setup_path,
+            "cell_param_path":   cell_param_path,
+            "global_param_path": global_param_path,
+            "ini_path":          ini_path,
         })
 
     @staticmethod
-    def _write_topkapi_ini(ini_path: str, cell_param_path: str, state) -> None:
-        """Write the TOPKAPI model run configuration file."""
-        param_dir   = os.path.dirname(ini_path)
-        results_dir = os.path.join(state.project_dir, "results")
-        os.makedirs(results_dir, exist_ok=True)
+    def _write_global_param(path: str, state) -> None:
+        """Write global_param.dat (header row + space-separated data row)."""
+        # PyTOPKAPI pretreatment.read_global_parameters() reads columns:
+        # X  Dt  alpha_s  alpha_o  alpha_c  A_thres  W_min  W_max
+        header = "X Dt alpha_s alpha_o alpha_c A_thres W_min W_max"
+        values = (
+            f"{state.cell_size_m:.1f} "
+            f"{state.dt_s} "
+            f"{state.alpha_s} "
+            f"{state.alpha_oc:.8f} "
+            f"{state.alpha_oc:.8f} "
+            f"{state.A_thres:.1f} "
+            f"{state.W_min:.2f} "
+            f"{state.W_max:.2f}"
+        )
+        with open(path, "w") as f:
+            f.write(header + "\n")
+            f.write(values + "\n")
 
+    @staticmethod
+    def _write_topkapi_ini(ini_path: str, cell_param_path: str,
+                           global_param_path: str, state) -> None:
+        """Write the TOPKAPI model run configuration file (correct section names)."""
+        results_dir  = os.path.join(state.project_dir, "results")
+        os.makedirs(results_dir, exist_ok=True)
         results_path = os.path.join(results_dir, "simulation_output.h5")
 
         cfg = ConfigParser()
-        cfg["topkapi_options"] = {
-            "field_names": "0",
+
+        cfg["numerical_options"] = {
+            "solve_s":              "1",
+            "solve_o":              "1",
+            "solve_c":              "1",
+            "only_channel_output":  "False",
         }
-        cfg["paths"] = {
-            "param_file":   cell_param_path,
-            "rain_file":    state.rainfields_path or "",
-            "ET_file":      state.et_path or "",
-            "result_file":  results_path,
+
+        cfg["input_files"] = {
+            "file_global_param": global_param_path,
+            "file_cell_param":   cell_param_path,
+            "file_rain":         state.rainfields_path or "",
+            "file_ET":           state.et_path or "",
         }
+
         cfg["groups"] = {
-            "rain_group": state.rain_group,
-            "ET_group":   state.et_group,
+            "group_name": state.group_name,
         }
-        cfg["numerical_values"] = {
-            "dt":           str(state.dt_s),
-            "alpha_s":      str(state.alpha_s),
-            "alpha_oc":     str(state.alpha_oc),
-            "alpha_c":      str(state.alpha_oc),
-            "A_thres":      str(state.A_thres),
-            "W_min":        str(state.W_min),
-            "W_max":        str(state.W_max),
-        }
-        cfg["calibration"] = {
+
+        cfg["calib_params"] = {
             "fac_L":   str(state.fac_L),
             "fac_Ks":  str(state.fac_Ks),
             "fac_n_o": str(state.fac_n_o),
             "fac_n_c": str(state.fac_n_c),
         }
+
+        cfg["external_flow"] = {
+            "external_flow": "False",
+        }
+
+        cfg["output_files"] = {
+            "file_out":       results_path,
+            "append_output":  "False",
+        }
+
         with open(ini_path, "w") as f:
             cfg.write(f)

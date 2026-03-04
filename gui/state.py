@@ -96,9 +96,8 @@ class ProjectState:
     fac_n_o: float = 1.00
     fac_n_c: float = 1.00
 
-    # ── HDF5 group names ──────────────────────────────────────────────────────
-    rain_group: str = "sample event"    # note the space — matches Fatoyinbo code
-    et_group:   str = "sample_event"   # note the underscore
+    # ── HDF5 group name (shared by rainfields.h5 and ET.h5) ──────────────────
+    group_name: str = "sample_event"   # must match in both HDF5 files
 
     # ── Manning channel lookup (Strahler order → n_c) ─────────────────────────
     manning_nc: dict = field(default_factory=lambda: {

@@ -36,3 +36,41 @@ class BasePanel(QWidget):
 
     def set_status(self, msg: str) -> None:
         self._mw.set_status(msg)
+
+    def _browse_and_set(self, state_attr: str, label: str,
+                        post_fn=None, start_dir: str = "") -> "str | None":
+        """Open a GeoTIFF file dialog, set state attribute, save and refresh."""
+        import os
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select {label}",
+            start_dir or (self._state.project_dir or os.path.expanduser("~")),
+            "GeoTIFF (*.tif *.tiff);;All files (*)",
+        )
+        if path:
+            setattr(self._state, state_attr, path)
+            if post_fn:
+                post_fn(path)
+            self._state.save()
+            self.refresh_from_state()
+            self._mw.refresh_workflow_list()
+            self.log(f"Loaded {label}: {os.path.basename(path)}", "ok")
+            return path
+        return None
+
+    @staticmethod
+    def _read_n_cells_from_mask(mask_path: str) -> "int | None":
+        """Count catchment cells in a mask GeoTIFF (non-nodata pixels)."""
+        try:
+            import rasterio
+            import numpy as np
+            with rasterio.open(mask_path) as src:
+                data = src.read(1)
+                nd   = src.nodata
+            if nd is not None:
+                return int(np.sum(data != int(nd)))
+            return int(np.sum((data != 0) & (data != 255)))
+        except Exception:
+            return None

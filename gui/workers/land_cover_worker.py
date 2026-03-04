@@ -92,4 +92,4 @@ class LandCoverWorker(BaseWorker):
 
         self.progress.emit(100)
         self.log_message.emit(f"Manning n_o raster written: {out_path}")
-        self.finished.emit({"mannings_path": out_path})
+        self.finished.emit({"mannings_path": out_path, "landcover_ready": True})

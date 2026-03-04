@@ -14,10 +14,20 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+# ── Scientific packages venv (~/.pyenvs/pytopkapi-gui/) ────────────────────────
+# Scientific packages (rasterio, pysheds, numpy, h5py, matplotlib, folium,
+# geopandas, pytopkapi, etc.) live in a venv outside iCloud to avoid the macOS
+# UF_HIDDEN bug that makes Python 3.14 skip .pth files in iCloud-synced folders.
+_pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+_sci_site = os.path.expanduser(f"~/.pyenvs/pytopkapi-gui/lib/{_pyver}/site-packages")
+if os.path.isdir(_sci_site) and _sci_site not in sys.path:
+    sys.path.insert(0, _sci_site)
+del _pyver, _sci_site
+
 # ── macOS Homebrew PyQt6 path ───────────────────────────────────────────────────
-# When the venv lives inside an iCloud-synced folder, macOS sets UF_HIDDEN on
-# .pth files so Python 3.14 silently skips them.  We fall back to inserting the
-# Homebrew site-packages path manually before PyQt6 is imported.
+# PyQt6 and PyQt6-WebEngine are installed via Homebrew (not in the sci venv).
+# Insert the Homebrew site-packages so PyQt6 is importable when running with
+# the system Python directly.
 if sys.platform == "darwin":
     import sysconfig as _sc
     _pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
@@ -39,6 +49,9 @@ if getattr(sys, "frozen", False):
     )
 
 # ── Qt application ─────────────────────────────────────────────────────────────
+# QtWebEngineWidgets MUST be imported before QApplication is created, otherwise
+# Qt raises: "AA_ShareOpenGLContexts must be set before a QCoreApplication"
+from PyQt6.QtWebEngineWidgets import QWebEngineView as _QWebEngineView  # noqa: F401
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont

@@ -5,7 +5,7 @@ Step 3 — Watershed
   • Place outlet marker on interactive Folium map
   • Delineate catchment (calls WatershedWorker task='delineate')
   • Compute slope raster (calls WatershedWorker task='slope')
-  • Display mask + slope in shared RasterCanvas
+  • OR load already-processed mask + slope rasters directly
 """
 
 import os
@@ -47,15 +47,39 @@ class WatershedPanel(BasePanel):
         title.setProperty("role", "title")
         layout.addWidget(title)
 
+        # ── Load existing rasters ──────────────────────────────────────────
+        load_box = QGroupBox("Load Existing Rasters")
+        load_form = QFormLayout(load_box)
+        load_form.setSpacing(6)
+
+        hint = QLabel("Already have a GRASS catchment mask and slope?  Load them here.")
+        hint.setStyleSheet("color:#aaa; font-size:11px;")
+        hint.setWordWrap(True)
+        load_form.addRow("", hint)
+
+        self._load_mask_btn = QPushButton("Browse…  Catchment Mask (binary)")
+        self._load_mask_btn.clicked.connect(self._load_mask)
+        load_form.addRow("Mask:", self._load_mask_btn)
+
+        self._mask_load_status = QLabel("")
+        self._mask_load_status.setStyleSheet("color:#aaa; font-size:11px;")
+        load_form.addRow("", self._mask_load_status)
+
+        self._load_slope_btn = QPushButton("Browse…  Slope Raster (degrees)")
+        self._load_slope_btn.clicked.connect(self._load_slope)
+        load_form.addRow("Slope:", self._load_slope_btn)
+
+        layout.addWidget(load_box)
+
         # ── Outlet group ──────────────────────────────────────────────────
-        outlet_box = QGroupBox("Outlet Point")
+        outlet_box = QGroupBox("Outlet Point  (for pysheds delineation)")
         outlet_form = QFormLayout(outlet_box)
         outlet_form.setSpacing(8)
 
-        hint = QLabel("Click the outlet marker tool on the map →\nthen click the stream outlet location.")
-        hint.setStyleSheet("color:#aaa; font-size:11px;")
-        hint.setWordWrap(True)
-        outlet_form.addRow("", hint)
+        hint2 = QLabel("Click the outlet marker tool on the map →\nthen click the stream outlet location.")
+        hint2.setStyleSheet("color:#aaa; font-size:11px;")
+        hint2.setWordWrap(True)
+        outlet_form.addRow("", hint2)
 
         self._outlet_label = QLabel("No outlet set.")
         self._outlet_label.setStyleSheet("color:#aaa;")
@@ -64,7 +88,7 @@ class WatershedPanel(BasePanel):
         layout.addWidget(outlet_box)
 
         # ── Delineation group ─────────────────────────────────────────────
-        delin_box = QGroupBox("Catchment Delineation")
+        delin_box = QGroupBox("Catchment Delineation  (pysheds)")
         delin_form = QFormLayout(delin_box)
         delin_form.setSpacing(8)
 
@@ -82,7 +106,7 @@ class WatershedPanel(BasePanel):
         layout.addWidget(delin_box)
 
         # ── Slope group ───────────────────────────────────────────────────
-        slope_box = QGroupBox("Slope Raster")
+        slope_box = QGroupBox("Slope Raster  (gdaldem)")
         slope_form = QFormLayout(slope_box)
         slope_form.setSpacing(8)
 
@@ -129,10 +153,15 @@ class WatershedPanel(BasePanel):
             self._delin_status.setText(f"✅ {os.path.basename(s.mask_path)}{n}")
             self._delin_status.setStyleSheet("color:#2ecc71; font-size:11px;")
             self._slope_btn.setEnabled(True)
+            self._mask_load_status.setText(
+                f"✅ Mask loaded — {s.n_cells:,} cells" if s.n_cells else "✅ Mask loaded"
+            )
+            self._mask_load_status.setStyleSheet("color:#2ecc71; font-size:11px;")
         else:
             self._delin_status.setText("Not yet delineated.")
             self._delin_status.setStyleSheet("color:#aaa; font-size:11px;")
             self._slope_btn.setEnabled(False)
+            self._mask_load_status.setText("")
 
         # Slope status
         if s.slope_path and os.path.exists(s.slope_path):
@@ -143,6 +172,24 @@ class WatershedPanel(BasePanel):
             self._slope_status.setStyleSheet("color:#aaa; font-size:11px;")
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Load existing rasters
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _load_mask(self):
+        def _after_mask(path):
+            n = self._read_n_cells_from_mask(path)
+            if n is not None:
+                self._state.n_cells = n
+                self.log(f"  n_cells = {n:,}", "ok")
+            else:
+                self.log("  Could not read n_cells from mask (rasterio missing?)", "warn")
+
+        self._browse_and_set("mask_path", "Catchment Mask", post_fn=_after_mask)
+
+    def _load_slope(self):
+        self._browse_and_set("slope_path", "Slope Raster (degrees)")
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Map widget
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -151,8 +198,6 @@ class WatershedPanel(BasePanel):
             return
 
         state = self._state
-
-        # Centre on AOI centre or Umhlanga default
         if state.bbox:
             b = state.bbox
             centre = ((b["south"] + b["north"]) / 2, (b["west"] + b["east"]) / 2)
@@ -164,7 +209,6 @@ class WatershedPanel(BasePanel):
             lon, lat = state.outlet_xy
             existing_outlet = (lat, lon)
 
-        # Build catchment geojson overlay if mask exists
         catchment_geojson = None
         if state.mask_path and os.path.exists(state.mask_path):
             catchment_geojson = self._mask_to_geojson(state.mask_path)
@@ -191,7 +235,6 @@ class WatershedPanel(BasePanel):
 
     @staticmethod
     def _mask_to_geojson(mask_path: str) -> dict | None:
-        """Convert the binary mask raster to a GeoJSON polygon for map overlay."""
         try:
             import rasterio
             from rasterio.features import shapes
@@ -229,7 +272,7 @@ class WatershedPanel(BasePanel):
             return None
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Button slots
+    # Process buttons
     # ──────────────────────────────────────────────────────────────────────────
 
     def _delineate(self):
@@ -237,9 +280,8 @@ class WatershedPanel(BasePanel):
             self.log("Place the outlet marker on the map first.", "warn")
             return
         if not self._state.filled_dem_path:
-            self.log("Complete DEM Processing (Step 2) first.", "warn")
+            self.log("Load a DEM in Step 2 first.", "warn")
             return
-
         worker = WatershedWorker(self._state, task="delineate")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._delin_btn.setEnabled(True))
@@ -250,9 +292,8 @@ class WatershedPanel(BasePanel):
 
     def _slope(self):
         if not self._state.filled_dem_path:
-            self.log("Complete DEM Processing (Step 2) first.", "warn")
+            self.log("Load a DEM in Step 2 first.", "warn")
             return
-
         worker = WatershedWorker(self._state, task="slope")
         worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._slope_btn.setEnabled(True))
