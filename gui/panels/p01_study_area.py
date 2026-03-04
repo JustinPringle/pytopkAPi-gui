@@ -10,7 +10,8 @@ Step 1 — Study Area
 
 import os
 
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, QUrl, pyqtSlot
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -130,10 +131,35 @@ class StudyAreaPanel(BasePanel):
             self._dem_type_combo.addItem(label)
         dem_form.addRow("DEM type:", self._dem_type_combo)
 
+        # API key row: [text field] [Show/Hide] [Get free key →]
+        key_row = QWidget()
+        key_hl  = QHBoxLayout(key_row)
+        key_hl.setContentsMargins(0, 0, 0, 0)
+        key_hl.setSpacing(4)
+
         self._api_key_edit = QLineEdit()
         self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key_edit.setPlaceholderText("Get a free key at portal.opentopography.org")
-        dem_form.addRow("API key:", self._api_key_edit)
+        self._api_key_edit.setPlaceholderText("Paste your API key here…")
+        # Auto-save key whenever the user finishes editing
+        self._api_key_edit.editingFinished.connect(self._save_api_key)
+        key_hl.addWidget(self._api_key_edit, stretch=1)
+
+        self._show_key_btn = QPushButton("Show")
+        self._show_key_btn.setFixedWidth(46)
+        self._show_key_btn.setCheckable(True)
+        self._show_key_btn.toggled.connect(self._toggle_key_visibility)
+        key_hl.addWidget(self._show_key_btn)
+
+        get_key_btn = QPushButton("Get free key →")
+        get_key_btn.setToolTip("Opens portal.opentopography.org/requestApiKey in your browser")
+        get_key_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://portal.opentopography.org/requestApiKey")
+            )
+        )
+        key_hl.addWidget(get_key_btn)
+
+        dem_form.addRow("API key:", key_row)
 
         self._download_btn = QPushButton("Download DEM")
         self._download_btn.setProperty("primary", "true")
@@ -168,6 +194,9 @@ class StudyAreaPanel(BasePanel):
         if s.project_dir:
             parent = os.path.dirname(s.project_dir)
             self._dir_edit.setText(parent)
+        # Restore saved API key so user doesn't have to re-enter it each session
+        if s.ot_api_key and not self._api_key_edit.text():
+            self._api_key_edit.setText(s.ot_api_key)
         if s.dem_path:
             self._dem_status_label.setText(f"✅ {os.path.basename(s.dem_path)}")
             self._dem_status_label.setStyleSheet("color:#2ecc71; font-size:11px;")
@@ -220,6 +249,22 @@ class StudyAreaPanel(BasePanel):
     # ──────────────────────────────────────────────────────────────────────────
     # Slots
     # ──────────────────────────────────────────────────────────────────────────
+
+    def _toggle_key_visibility(self, checked: bool):
+        """Toggle API key between hidden (password) and visible (normal) text."""
+        if checked:
+            self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._show_key_btn.setText("Hide")
+        else:
+            self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self._show_key_btn.setText("Show")
+
+    def _save_api_key(self):
+        """Persist API key to state whenever the user finishes editing."""
+        key = self._api_key_edit.text().strip()
+        if key:
+            self._state.ot_api_key = key
+            self._state.save()
 
     def _browse_dir(self):
         path = QFileDialog.getExistingDirectory(
