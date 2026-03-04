@@ -32,10 +32,12 @@ CRS_OPTIONS = {
 }
 
 DEM_OPTIONS = {
-    "SRTMGL1 (1 arc-sec ~30 m)": "SRTMGL1",
-    "SRTMGL3 (3 arc-sec ~90 m)": "SRTMGL3",
-    "COP-DEM GLO-30 (30 m, Copernicus)": "COP30",
-    "NASADEM (30 m)": "NASADEM",
+    "SRTMGL1 (1 arc-sec ~30 m)  ★ recommended": "SRTMGL1",
+    "SRTMGL3 (3 arc-sec ~90 m)":                "SRTMGL3",
+    "SRTMGL1_E (ellipsoidal heights, 30 m)":    "SRTMGL1_E",
+    "COP-DEM GLO-30 (30 m, Copernicus)":         "COP30",
+    "NASADEM (30 m)":                            "NASADEM",
+    "ALOS World 3D (30 m)":                      "AW3D30",
 }
 
 
@@ -139,7 +141,7 @@ class StudyAreaPanel(BasePanel):
 
         self._api_key_edit = QLineEdit()
         self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key_edit.setPlaceholderText("Paste your API key here…")
+        self._api_key_edit.setPlaceholderText("Optional — leave blank to download anonymously")
         # Auto-save key whenever the user finishes editing
         self._api_key_edit.editingFinished.connect(self._save_api_key)
         key_hl.addWidget(self._api_key_edit, stretch=1)
@@ -161,9 +163,17 @@ class StudyAreaPanel(BasePanel):
 
         dem_form.addRow("API key:", key_row)
 
+        key_hint = QLabel(
+            "API key is optional.  Anonymous downloads work but are rate-limited.\n"
+            "A free key removes the limit — click 'Get free key →' above."
+        )
+        key_hint.setStyleSheet("color:#aaa; font-size:11px;")
+        key_hint.setWordWrap(True)
+        dem_form.addRow("", key_hint)
+
         self._download_btn = QPushButton("Download DEM")
         self._download_btn.setProperty("primary", "true")
-        self._download_btn.setEnabled(False)
+        self._download_btn.setEnabled(False)   # enabled once AOI is drawn
         self._download_btn.clicked.connect(self._download_dem)
         dem_form.addRow("", self._download_btn)
 
@@ -305,15 +315,15 @@ class StudyAreaPanel(BasePanel):
         if not self._state.bbox:
             self.log("Draw an AOI rectangle on the map first.", "warn")
             return
+
+        # Save API key if provided (it's optional — anonymous downloads work too)
         key = self._api_key_edit.text().strip()
-        if not key:
-            self.log("Enter an OpenTopography API key.", "warn")
-            return
+        if key:
+            self._state.ot_api_key = key
 
         dem_label = self._dem_type_combo.currentText()
         dem_type  = DEM_OPTIONS.get(dem_label, "SRTMGL1")
-        self._state.ot_api_key = key
-        self._state.dem_type   = dem_type
+        self._state.dem_type = dem_type
 
         worker = DemWorker(self._state, task="download")
         worker.log_message.connect(lambda m: self.log(m))

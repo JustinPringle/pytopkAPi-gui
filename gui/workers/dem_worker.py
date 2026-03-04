@@ -38,35 +38,49 @@ class DemWorker(BaseWorker):
             return
 
         b   = self._state.bbox
-        key = self._state.ot_api_key
+        key = self._state.ot_api_key   # optional — omitted if not set
         dem = self._state.dem_type or "SRTMGL1"
 
-        if not b or not key:
-            self.error.emit("AOI bbox and API key must be set before downloading.")
+        if not b:
+            self.error.emit("AOI bounding box not set. Draw a rectangle on the map first.")
             return
 
+        # API key is optional (anonymous requests are rate-limited but work)
         url = (
             "https://portal.opentopography.org/API/globaldem"
             f"?demtype={dem}"
             f"&south={b['south']}&north={b['north']}"
             f"&west={b['west']}&east={b['east']}"
-            f"&outputFormat=GTiff&API_Key={key}"
+            f"&outputFormat=GTiff"
         )
+        if key:
+            url += f"&API_Key={key}"
 
         out_dir  = os.path.join(self._state.project_dir, "rasters")
         out_path = os.path.join(out_dir, "raw_dem.tif")
 
-        self.log_message.emit(f"Downloading {dem} from OpenTopography…")
+        if key:
+            self.log_message.emit(f"Downloading {dem} from OpenTopography (API key set)…")
+        else:
+            self.log_message.emit(
+                f"Downloading {dem} from OpenTopography (no API key — anonymous, "
+                "rate-limited)…"
+            )
         self.progress.emit(5)
 
         try:
-            r = requests.get(url, timeout=180, stream=True)
+            r = requests.get(url, timeout=300, stream=True)
 
-            # OpenTopography returns an error as JSON/text with HTTP 200
+            # OpenTopography signals errors as JSON/XML with HTTP 200
             content_type = r.headers.get("Content-Type", "")
-            if "application/json" in content_type or "text" in content_type:
-                text = r.text[:500]
-                self.error.emit(f"OpenTopography error: {text}")
+            if "application/json" in content_type or "text/xml" in content_type \
+                    or "text/html" in content_type:
+                text = r.text[:800]
+                self.error.emit(
+                    f"OpenTopography returned an error response:\n{text}\n\n"
+                    "If you see '401 Unauthorized', add a free API key at "
+                    "portal.opentopography.org/requestApiKey"
+                )
                 return
 
             r.raise_for_status()
