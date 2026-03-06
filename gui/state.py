@@ -41,6 +41,7 @@ class ProjectState:
     slope_path:      Optional[str] = None   # slope in degrees (r.slope.aspect)
     streamnet_path:  Optional[str] = None   # stream network binary (1=stream, 0=land)
     strahler_path:   Optional[str] = None   # Strahler order raster
+    hillshade_path:  Optional[str] = None   # gdaldem hillshade output
 
     # ── Soil raster paths ─────────────────────────────────────────────────────
     hwsd_path:          Optional[str]  = None
@@ -111,6 +112,20 @@ class ProjectState:
     dominant_lc_code: int = 1
     lc_path:          Optional[str] = None   # land cover GeoTIFF path
 
+    # ── Map overlays (shapefiles loaded for reference) ─────────────────────
+    overlay_paths:    list = field(default_factory=list)   # original file paths
+    overlay_names:    list = field(default_factory=list)   # display names (basename)
+    overlay_geojsons: list = field(default_factory=list)   # WGS84 GeoJSON FeatureCollection strings
+
+    # ── Subcatchments (one entry per delineated sub-basin) ────────────────
+    subcatchment_outlets:  list = field(default_factory=list)  # [(lon, lat), …]
+    subcatchment_geojsons: list = field(default_factory=list)  # WGS84 GeoJSON Feature strings
+    subcatchment_n_cells:  list = field(default_factory=list)  # int cell count per sub-basin
+
+    # ── Clip outputs ──────────────────────────────────────────────────────
+    clipped_dem_path: Optional[str] = None   # DEM cropped to subcatchment extent
+    clip_mask_path:   Optional[str] = None   # binary mask (1=cell, 255=nodata)
+
     # ──────────────────────────────────────────────────────────────────────────
     # Persistence
     # ──────────────────────────────────────────────────────────────────────────
@@ -136,6 +151,9 @@ class ProjectState:
         # outlet_xy stored as list in JSON — restore as tuple
         if data.get("outlet_xy"):
             data["outlet_xy"] = tuple(data["outlet_xy"])
+        # subcatchment_outlets: list of [lon, lat] lists → list of (lon, lat) tuples
+        if data.get("subcatchment_outlets"):
+            data["subcatchment_outlets"] = [tuple(xy) for xy in data["subcatchment_outlets"]]
         # Filter out any keys not in the dataclass (forward-compat)
         valid = {f.name for f in cls.__dataclass_fields__.values()}
         data = {k: v for k, v in data.items() if k in valid}

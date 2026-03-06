@@ -229,7 +229,6 @@ class ForcingDataPanel(BasePanel):
             self.log("Select the Obscape CSV folder first.", "warn")
             return
         worker = ForcingWorker(self._state, task="obscape", source_path=src)
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._obsc_btn.setEnabled(True))
         worker.error.connect(lambda _: self._obsc_btn.setEnabled(True))
         self._obsc_btn.setEnabled(False)
@@ -242,7 +241,6 @@ class ForcingDataPanel(BasePanel):
             self.log("Select a rainfall file first.", "warn")
             return
         worker = ForcingWorker(self._state, task="rainfall", source_path=src)
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._rain_btn.setEnabled(True))
         worker.error.connect(lambda _: self._rain_btn.setEnabled(True))
         self._rain_btn.setEnabled(False)
@@ -266,7 +264,6 @@ class ForcingDataPanel(BasePanel):
 
     def _generate_synthetic_et(self):
         worker = ForcingWorker(self._state, task="synthetic_et")
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._syn_et_btn.setEnabled(True))
         worker.error.connect(lambda _: self._syn_et_btn.setEnabled(True))
         self._syn_et_btn.setEnabled(False)
@@ -287,7 +284,6 @@ class ForcingDataPanel(BasePanel):
             self.log("Select an ET file first.", "warn")
             return
         worker = ForcingWorker(self._state, task="et", source_path=src)
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._et_btn.setEnabled(True))
         worker.error.connect(lambda _: self._et_btn.setEnabled(True))
         self._et_btn.setEnabled(False)

@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QTextCursor
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QPlainTextEdit, QLabel,
+    QPushButton, QPlainTextEdit, QLabel, QSizePolicy,
 )
 
 
@@ -27,6 +27,7 @@ class LogDock(QDockWidget):
 
         # ── inner widget ────────────────────────────────────────────────────
         inner = QWidget()
+        inner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
@@ -58,10 +59,11 @@ class LogDock(QDockWidget):
         self._text.setStyleSheet(
             "background:#1e1e1e; color:#d4d4d4; border:none; padding:4px;"
         )
-        layout.addWidget(self._text)
+        self._text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self._text, stretch=1)
 
         self.setWidget(inner)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(100)
 
     # ── public API ──────────────────────────────────────────────────────────
 

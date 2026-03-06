@@ -32,12 +32,13 @@ CRS_OPTIONS = {
 }
 
 DEM_OPTIONS = {
-    "SRTMGL1 (1 arc-sec ~30 m)  ★ recommended": "SRTMGL1",
-    "SRTMGL3 (3 arc-sec ~90 m)":                "SRTMGL3",
-    "SRTMGL1_E (ellipsoidal heights, 30 m)":    "SRTMGL1_E",
-    "COP-DEM GLO-30 (30 m, Copernicus)":         "COP30",
-    "NASADEM (30 m)":                            "NASADEM",
-    "ALOS World 3D (30 m)":                      "AW3D30",
+    # value prefix "tiles:" → use free AWS tile download (no key needed)
+    # value prefix "ot:"    → use OpenTopography API (API key required)
+    "SRTM 1-arc-sec 30m  (Free tiles — no key)  ★ recommended": "tiles:SRTMGL1",
+    "SRTMGL1 via OpenTopography  (API key required)":            "ot:SRTMGL1",
+    "SRTMGL3 90m via OpenTopography  (API key required)":        "ot:SRTMGL3",
+    "COP-DEM GLO-30 via OpenTopography  (API key required)":     "ot:COP30",
+    "NASADEM via OpenTopography  (API key required)":            "ot:NASADEM",
 }
 
 
@@ -173,7 +174,9 @@ class StudyAreaPanel(BasePanel):
 
         self._download_btn = QPushButton("Download DEM")
         self._download_btn.setProperty("primary", "true")
-        self._download_btn.setEnabled(False)   # enabled once AOI is drawn
+        self._download_btn.setToolTip(
+            "Draw a rectangle on the map to set the AOI, then click here to download."
+        )
         self._download_btn.clicked.connect(self._download_dem)
         dem_form.addRow("", self._download_btn)
 
@@ -217,7 +220,6 @@ class StudyAreaPanel(BasePanel):
                 f"W {b['west']:.4f}°  E {b['east']:.4f}°"
             )
             self._aoi_label.setStyleSheet("color:#2ecc71;")
-            self._download_btn.setEnabled(True)
         # Restore CRS combo
         for label, code in CRS_OPTIONS.items():
             if code == s.crs:
@@ -249,7 +251,6 @@ class StudyAreaPanel(BasePanel):
             f"W {b['west']:.4f}°  E {b['east']:.4f}°"
         )
         self._aoi_label.setStyleSheet("color:#2ecc71;")
-        self._download_btn.setEnabled(True)
         self.log(
             f"AOI set: N={b['north']:.4f} S={b['south']:.4f} "
             f"W={b['west']:.4f} E={b['east']:.4f}", "ok"
@@ -316,22 +317,24 @@ class StudyAreaPanel(BasePanel):
             self.log("Draw an AOI rectangle on the map first.", "warn")
             return
 
-        # Save API key if provided (it's optional — anonymous downloads work too)
         key = self._api_key_edit.text().strip()
         if key:
             self._state.ot_api_key = key
 
         dem_label = self._dem_type_combo.currentText()
-        dem_type  = DEM_OPTIONS.get(dem_label, "SRTMGL1")
-        self._state.dem_type = dem_type
+        dem_value = DEM_OPTIONS.get(dem_label, "tiles:SRTMGL1")
 
-        worker = DemWorker(self._state, task="download")
-        worker.log_message.connect(lambda m: self.log(m))
+        # Route: "tiles:*" → free AWS tile download; "ot:*" → OpenTopography API
+        if dem_value.startswith("tiles:"):
+            self._state.dem_type = dem_value[len("tiles:"):]
+            worker_task = "download_tiles"
+            status_msg  = "Downloading SRTM tiles from AWS (free)…"
+        else:
+            self._state.dem_type = dem_value[len("ot:"):] if dem_value.startswith("ot:") else dem_value
+            worker_task = "download"
+            status_msg  = "Downloading DEM from OpenTopography…"
+
+        worker = DemWorker(self._state, task=worker_task)
         self.start_worker(worker)
-        self._download_btn.setEnabled(False)
         self._dem_status_label.setText("Downloading…")
-        self.set_status("Downloading DEM from OpenTopography…")
-
-        # Re-enable button after worker finishes (connected via main_window)
-        worker.finished.connect(lambda _: self._download_btn.setEnabled(True))
-        worker.error.connect(lambda _: self._download_btn.setEnabled(True))
+        self.set_status(status_msg)

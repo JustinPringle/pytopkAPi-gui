@@ -40,10 +40,10 @@ class BaseWorker(QThread):
     # Human-readable error message. Shown in QMessageBox.critical() by MainWindow.
     # Workers should catch exceptions and emit this signal instead of raising.
 
-    def __init__(self, state, task: str = "", parent=None):
+    def __init__(self, state=None, task: str = "", parent=None):
         super().__init__(parent)
-        self.state = state   # ProjectState (read-only in workers; emit updates via finished)
-        self.task  = task    # Discriminator when one worker class handles multiple tasks
+        self._state = state  # ProjectState (read-only in workers; emit updates via finished)
+        self.task   = task   # Discriminator when one worker class handles multiple tasks
 
     def run(self) -> None:  # pragma: no cover
         raise NotImplementedError("Subclasses must implement run()")

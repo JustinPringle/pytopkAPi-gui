@@ -161,7 +161,6 @@ class ParameterFilesPanel(BasePanel):
         s.fac_L  = self._fac_l_spin.value()
 
         worker = ParamWorker(self._state)
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._gen_btn.setEnabled(True))
         worker.error.connect(lambda _: self._gen_btn.setEnabled(True))
         self._gen_btn.setEnabled(False)

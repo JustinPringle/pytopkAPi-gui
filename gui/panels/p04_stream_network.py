@@ -173,7 +173,6 @@ class StreamNetworkPanel(BasePanel):
             self.log("Flow accumulation not found. Load or compute in Step 2 first.", "warn")
             return
         worker = StreamWorker(self._state, task="extract")
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._extract_btn.setEnabled(True))
         worker.error.connect(lambda _: self._extract_btn.setEnabled(True))
         self._extract_btn.setEnabled(False)
@@ -185,7 +184,6 @@ class StreamNetworkPanel(BasePanel):
             self.log("Extract or load the stream network first.", "warn")
             return
         worker = StreamWorker(self._state, task="strahler")
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._order_btn.setEnabled(True))
         worker.error.connect(lambda _: self._order_btn.setEnabled(True))
         self._order_btn.setEnabled(False)

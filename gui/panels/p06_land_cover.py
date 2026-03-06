@@ -173,7 +173,6 @@ class LandCoverPanel(BasePanel):
             n_o_table=None,
             uniform_n_o=uniform_n_o,
         )
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(lambda _: self._gen_btn.setEnabled(True))
         worker.error.connect(lambda _: self._gen_btn.setEnabled(True))
         self._gen_btn.setEnabled(False)

@@ -216,7 +216,6 @@ class SoilParametersPanel(BasePanel):
         self._state.hwsd_path = path
 
         worker = SoilWorker(self._state, task="identify")
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(self._on_identify_finished)
         worker.error.connect(lambda _: self._identify_btn.setEnabled(True))
         self._identify_btn.setEnabled(False)
@@ -241,7 +240,6 @@ class SoilParametersPanel(BasePanel):
         self._state.hwsd_param_overrides = {str(k): v for k, v in params.items()}
 
         worker = SoilWorker(self._state, task="generate", hwsd_params=params)
-        worker.log_message.connect(lambda m: self.log(m))
         worker.finished.connect(self._on_generate_finished)
         worker.error.connect(lambda _: self._gen_btn.setEnabled(True))
         self._gen_btn.setEnabled(False)
