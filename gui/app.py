@@ -9,6 +9,7 @@ MainWindow — the top-level QMainWindow that hosts:
   - Status bar:  QProgressBar + step label
 """
 
+import json
 import os
 
 from PyQt6.QtCore import Qt, QSize
@@ -22,6 +23,8 @@ from PyQt6.QtWidgets import (
 
 from gui.state import ProjectState
 from gui.widgets.log_dock import LogDock
+from gui.widgets.map_view import MapView
+from gui.widgets.layers_dock import LayersDock
 
 # Panels (imported lazily to avoid circular imports at module level)
 PANEL_TITLES = [
@@ -58,6 +61,25 @@ def _load_panel_class(idx: int):
     return getattr(mod, cls_name)
 
 
+_RECENT_FILE = os.path.join(os.path.expanduser("~"), ".pytopkapi_gui_recent.json")
+
+
+def _save_recent(project_dir: str) -> None:
+    try:
+        with open(_RECENT_FILE, "w") as f:
+            json.dump({"last_project_dir": project_dir}, f)
+    except Exception:
+        pass
+
+
+def _load_recent() -> "str | None":
+    try:
+        with open(_RECENT_FILE) as f:
+            return json.load(f).get("last_project_dir")
+    except Exception:
+        return None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -72,8 +94,25 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_menu()
+
+        # Auto-reload last project if it still exists
+        last = _load_recent()
+        if last and os.path.exists(os.path.join(last, "project_state.json")):
+            try:
+                self._state = ProjectState.load(last)
+                self.refresh_workflow_list()
+                self._layers_dock.refresh_from_state(self._state)
+                self._log_dock.append_line(
+                    f"Resumed project: {self._state.project_name or last}", "ok"
+                )
+            except Exception:
+                pass
+
         self._activate_panel(0)
-        self._log_dock.append_line("PyTOPKAPI GUI ready. Create or open a project to begin.", "ok")
+        if not self._state.project_name:
+            self._log_dock.append_line(
+                "PyTOPKAPI GUI ready. Create or open a project to begin.", "ok"
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     #  UI construction
@@ -85,23 +124,21 @@ class MainWindow(QMainWindow):
         self._centre_tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._centre_tabs.setDocumentMode(True)
 
-        # Map tab — populated by MapWidget when panels need it
-        self._map_placeholder = QLabel("Select a step to load the map.")
-        self._map_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._map_placeholder.setStyleSheet("color:#888; font-size:14px;")
-        self._centre_tabs.addTab(self._map_placeholder, "🗺  Map")
+        # Map tab — persistent MapView (toolbar + swappable MapWidget)
+        self._map_view = MapView()
+        self._centre_tabs.addTab(self._map_view, "Map")
 
-        # Raster tab — populated by RasterCanvas
+        # Raster tab — populated by panels via set_raster_widget()
         self._raster_placeholder = QLabel("No raster to display yet.")
         self._raster_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._raster_placeholder.setStyleSheet("color:#888; font-size:14px;")
-        self._centre_tabs.addTab(self._raster_placeholder, "🖼  Raster")
+        self._centre_tabs.addTab(self._raster_placeholder, "Raster")
 
-        # Charts tab — populated by HydrographCanvas
+        # Charts tab — populated by panels via set_chart_widget()
         self._chart_placeholder = QLabel("No chart to display yet.")
         self._chart_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._chart_placeholder.setStyleSheet("color:#888; font-size:14px;")
-        self._centre_tabs.addTab(self._chart_placeholder, "📈  Charts")
+        self._centre_tabs.addTab(self._chart_placeholder, "Charts")
 
         self.setCentralWidget(self._centre_tabs)
 
@@ -132,6 +169,12 @@ class MainWindow(QMainWindow):
         left_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
         left_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, left_dock)
+
+        # ── Layers dock — below the workflow list ──────────────────────────────
+        self._layers_dock = LayersDock(self)
+        self._layers_dock.raster_selected.connect(self._show_layer_raster)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._layers_dock)
+        self.splitDockWidget(left_dock, self._layers_dock, Qt.Orientation.Vertical)
 
         # ── Right dock — properties panel ────────────────────────────────────
         self._props_scroll = QScrollArea()
@@ -212,11 +255,14 @@ class MainWindow(QMainWindow):
             item = self._workflow_list.item(i)
             done = self._state.step_complete(i)
             item.setForeground(QColor("#2ecc71" if done else "#ecf0f1"))
-            item.setToolTip("✅ Complete" if done else "⬜ Not yet complete")
+            item.setToolTip("Complete" if done else "Not yet complete")
+        # Persist the last-used project dir whenever the list is refreshed
+        if self._state.project_dir:
+            _save_recent(self._state.project_dir)
         # Update project info label
         if self._state.project_name:
             cells = f"\n{self._state.n_cells:,} cells" if self._state.n_cells else ""
-            self._project_label.setText(f"📁 {self._state.project_name}{cells}")
+            self._project_label.setText(f"{self._state.project_name}{cells}")
         else:
             self._project_label.setText("No project open")
 
@@ -241,7 +287,9 @@ class MainWindow(QMainWindow):
 
         panel = self._panels[idx]
 
-        # Swap the right-dock form
+        # Release the current widget WITHOUT deleting it (it's cached by its panel).
+        # setWidget() would delete the old widget, corrupting the next panel switch.
+        self._props_scroll.takeWidget()
         self._props_scroll.setWidget(panel.build_form())
 
         # Tell the panel it's now active (loads map, raster, etc.)
@@ -283,7 +331,10 @@ class MainWindow(QMainWindow):
         for key, value in updates.items():
             setattr(self._state, key, value)
         self._state.save()
+        if self._state.project_dir:
+            _save_recent(self._state.project_dir)
         self.refresh_workflow_list()
+        self._layers_dock.refresh_from_state(self._state)
         panel = self.get_active_panel()
         if panel is not None:
             panel.refresh_from_state()
@@ -304,21 +355,27 @@ class MainWindow(QMainWindow):
     # ══════════════════════════════════════════════════════════════════════════
 
     def set_map_widget(self, widget: QWidget):
-        """Replace the Map tab content."""
-        self._centre_tabs.removeTab(0)
-        self._centre_tabs.insertTab(0, widget, "🗺  Map")
+        """Load a MapWidget into the persistent MapView toolbar container."""
+        self._map_view.set_map_widget(widget)
         self._centre_tabs.setCurrentIndex(0)
+
+    def set_map_hint(self, msg: str) -> None:
+        """Show an instruction hint in the map toolbar (e.g. 'Click to place outlet')."""
+        self._map_view.set_hint(msg)
+
+    def clear_map_hint(self) -> None:
+        self._map_view.clear_hint()
 
     def set_raster_widget(self, widget: QWidget):
         """Replace the Raster tab content."""
         self._centre_tabs.removeTab(1)
-        self._centre_tabs.insertTab(1, widget, "🖼  Raster")
+        self._centre_tabs.insertTab(1, widget, "Raster")
         self._centre_tabs.setCurrentIndex(1)
 
     def set_chart_widget(self, widget: QWidget):
         """Replace the Charts tab content."""
         self._centre_tabs.removeTab(2)
-        self._centre_tabs.insertTab(2, widget, "📈  Charts")
+        self._centre_tabs.insertTab(2, widget, "Charts")
         self._centre_tabs.setCurrentIndex(2)
 
     def show_map_tab(self):
@@ -329,6 +386,19 @@ class MainWindow(QMainWindow):
 
     def show_chart_tab(self):
         self._centre_tabs.setCurrentIndex(2)
+
+    def _show_layer_raster(self, name: str, path: str, cmap: str) -> None:
+        """Called by LayersDock when user clicks a raster — display in Raster tab."""
+        raster_widget = self._centre_tabs.widget(1)
+        if raster_widget and hasattr(raster_widget, "show_file"):
+            raster_widget.show_file(path, title=name, cmap=cmap)
+        else:
+            from gui.widgets.raster_canvas import RasterCanvas
+            canvas = RasterCanvas()
+            canvas.show_file(path, title=name, cmap=cmap)
+            self._centre_tabs.removeTab(1)
+            self._centre_tabs.insertTab(1, canvas, "Raster")
+        self.show_raster_tab()
 
     # ══════════════════════════════════════════════════════════════════════════
     #  File menu actions
@@ -356,9 +426,11 @@ class MainWindow(QMainWindow):
             return
         try:
             self._state = ProjectState.load(path)
+            _save_recent(path)
             # Reset all panels so they re-read fresh state on next activation
             self._panels = [None] * 10
             self.refresh_workflow_list()
+            self._layers_dock.refresh_from_state(self._state)
             self._activate_panel(0)
             self._log_dock.append_line(
                 f"Opened project: {self._state.project_name or path}", "ok"
