@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from gui.state import ProjectState
 from gui.widgets.log_dock import LogDock
 from gui.widgets.map_view import MapView
+from gui.widgets.gis_canvas import GISCanvas
 from gui.widgets.layers_dock import LayersDock
 from gui.widgets.workflow_delegate import WorkflowDelegate
 
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
                 self._state = ProjectState.load(last)
                 self.refresh_workflow_list()
                 self._layers_dock.refresh_from_state(self._state)
+                self._sync_gis_canvas_crs()
                 self._log_dock.append_line(
                     f"Resumed project: {self._state.project_name or last}", "ok"
                 )
@@ -126,17 +128,21 @@ class MainWindow(QMainWindow):
         self._centre_tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._centre_tabs.setDocumentMode(True)
 
-        # Map tab — persistent MapView (toolbar + swappable MapWidget)
+        # Tab 0: Map — persistent MapView (toolbar + swappable Folium widget)
         self._map_view = MapView()
         self._centre_tabs.addTab(self._map_view, "Map")
 
-        # Raster tab — populated by panels via set_raster_widget()
+        # Tab 1: Layers — persistent GISCanvas (georeferenced raster + vector)
+        self._gis_canvas = GISCanvas()
+        self._centre_tabs.addTab(self._gis_canvas, "Layers")
+
+        # Tab 2: Raster — swappable intermediate view used by processing panels
         self._raster_placeholder = QLabel("No raster to display yet.")
         self._raster_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._raster_placeholder.setStyleSheet("color:#888; font-size:14px;")
         self._centre_tabs.addTab(self._raster_placeholder, "Raster")
 
-        # Charts tab — populated by panels via set_chart_widget()
+        # Tab 3: Charts — populated by panels via set_chart_widget()
         self._chart_placeholder = QLabel("No chart to display yet.")
         self._chart_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._chart_placeholder.setStyleSheet("color:#888; font-size:14px;")
@@ -174,6 +180,7 @@ class MainWindow(QMainWindow):
         self._layers_dock = LayersDock(self)
         self._layers_dock.raster_selected.connect(self._show_layer_raster)
         self._layers_dock.set_as_overlay.connect(self._set_layer_as_overlay)
+        self._layers_dock.layer_visibility_changed.connect(self._on_layer_visibility_changed)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._layers_dock)
         self.splitDockWidget(left_dock, self._layers_dock, Qt.Orientation.Vertical)
 
@@ -337,6 +344,7 @@ class MainWindow(QMainWindow):
             _save_recent(self._state.project_dir)
         self.refresh_workflow_list()
         self._layers_dock.refresh_from_state(self._state)
+        self._sync_gis_canvas_crs()
         panel = self.get_active_panel()
         if panel is not None:
             panel.refresh_from_state()
@@ -352,14 +360,26 @@ class MainWindow(QMainWindow):
     def set_status(self, msg: str):
         self._status_label.setText(msg)
 
+    def _sync_gis_canvas_crs(self) -> None:
+        """Pass project CRS to GISCanvas so vectors reproject correctly."""
+        crs = getattr(self._state, "crs", None)
+        if crs:
+            self._gis_canvas.set_project_crs(crs)
+
     # ══════════════════════════════════════════════════════════════════════════
     #  Central tab helpers (called by panels)
     # ══════════════════════════════════════════════════════════════════════════
 
+    # Tab indices
+    _TAB_MAP     = 0
+    _TAB_LAYERS  = 1
+    _TAB_RASTER  = 2
+    _TAB_CHARTS  = 3
+
     def set_map_widget(self, widget: QWidget):
         """Load a MapWidget into the persistent MapView toolbar container."""
         self._map_view.set_map_widget(widget)
-        self._centre_tabs.setCurrentIndex(0)
+        self._centre_tabs.setCurrentIndex(self._TAB_MAP)
 
     def set_map_hint(self, msg: str) -> None:
         """Show an instruction hint in the map toolbar (e.g. 'Click to place outlet')."""
@@ -369,49 +389,68 @@ class MainWindow(QMainWindow):
         self._map_view.clear_hint()
 
     def set_raster_widget(self, widget: QWidget):
-        """Replace the Raster tab content."""
-        self._centre_tabs.removeTab(1)
-        self._centre_tabs.insertTab(1, widget, "Raster")
-        self._centre_tabs.setCurrentIndex(1)
+        """Replace the Raster tab content (used by processing panels for intermediate views)."""
+        self._centre_tabs.removeTab(self._TAB_RASTER)
+        self._centre_tabs.insertTab(self._TAB_RASTER, widget, "Raster")
+        self._centre_tabs.setCurrentIndex(self._TAB_RASTER)
 
     def set_chart_widget(self, widget: QWidget):
         """Replace the Charts tab content."""
-        self._centre_tabs.removeTab(2)
-        self._centre_tabs.insertTab(2, widget, "Charts")
-        self._centre_tabs.setCurrentIndex(2)
+        self._centre_tabs.removeTab(self._TAB_CHARTS)
+        self._centre_tabs.insertTab(self._TAB_CHARTS, widget, "Charts")
+        self._centre_tabs.setCurrentIndex(self._TAB_CHARTS)
 
     def show_map_tab(self):
-        self._centre_tabs.setCurrentIndex(0)
+        self._centre_tabs.setCurrentIndex(self._TAB_MAP)
+
+    def show_layers_tab(self):
+        self._centre_tabs.setCurrentIndex(self._TAB_LAYERS)
 
     def show_raster_tab(self):
-        self._centre_tabs.setCurrentIndex(1)
+        self._centre_tabs.setCurrentIndex(self._TAB_RASTER)
 
     def show_chart_tab(self):
-        self._centre_tabs.setCurrentIndex(2)
+        self._centre_tabs.setCurrentIndex(self._TAB_CHARTS)
+
+    def _on_layer_visibility_changed(
+        self, name: str, path: str, cmap: str, ltype: str, visible: bool
+    ) -> None:
+        """Toggle a layer in GISCanvas when the LayersDock checkbox changes."""
+        if not path:
+            return
+        if visible:
+            if self._gis_canvas.has_layer(name):
+                self._gis_canvas.show_layer(name)
+            elif ltype == "raster":
+                self._gis_canvas.add_raster(name, path, cmap or "terrain")
+            else:
+                self._gis_canvas.add_vector(name, path)
+        else:
+            self._gis_canvas.hide_layer(name)
+        # Switch to Layers tab so the user sees the result
+        self.show_layers_tab()
 
     def _show_layer_raster(self, name: str, path: str, cmap: str) -> None:
-        """Called by LayersDock when user clicks a raster — display in Raster tab."""
-        raster_widget = self._centre_tabs.widget(1)
-        if raster_widget and hasattr(raster_widget, "show_file"):
-            raster_widget.show_file(path, title=name, cmap=cmap)
+        """Called by LayersDock single-click — toggle layer into GISCanvas."""
+        if self._gis_canvas.has_layer(name):
+            self._gis_canvas.show_layer(name)
         else:
-            from gui.widgets.raster_canvas import RasterCanvas
-            canvas = RasterCanvas()
-            canvas.show_file(path, title=name, cmap=cmap)
-            self._centre_tabs.removeTab(1)
-            self._centre_tabs.insertTab(1, canvas, "Raster")
-        self.show_raster_tab()
+            self._gis_canvas.add_raster(name, path, cmap or "terrain")
+        self.show_layers_tab()
 
     def _set_layer_as_overlay(self, name: str, path: str, cmap: str) -> None:
-        """Called by LayersDock right-click → 'Set as Overlay'."""
-        raster_widget = self._centre_tabs.widget(1)
+        """Called by LayersDock right-click → 'Set as Overlay' — adds to Raster tab."""
+        raster_widget = self._centre_tabs.widget(self._TAB_RASTER)
         if raster_widget and hasattr(raster_widget, "set_overlay"):
             raster_widget.set_overlay(name, path, cmap)
             self.show_raster_tab()
         else:
-            # No canvas open yet — open the layer as base first, then it can be
-            # set as overlay by the user from the toolbar combos.
-            self._show_layer_raster(name, path, cmap)
+            from gui.widgets.raster_canvas import RasterCanvas
+            canvas = RasterCanvas()
+            canvas.show_file(path, title=name, cmap=cmap)
+            self._centre_tabs.removeTab(self._TAB_RASTER)
+            self._centre_tabs.insertTab(self._TAB_RASTER, canvas, "Raster")
+            self.show_raster_tab()
 
     # ══════════════════════════════════════════════════════════════════════════
     #  File menu actions
@@ -442,8 +481,10 @@ class MainWindow(QMainWindow):
             _save_recent(path)
             # Reset all panels so they re-read fresh state on next activation
             self._panels = [None] * 10
+            self._gis_canvas.clear()
             self.refresh_workflow_list()
             self._layers_dock.refresh_from_state(self._state)
+            self._sync_gis_canvas_crs()
             self._activate_panel(0)
             self._log_dock.append_line(
                 f"Opened project: {self._state.project_name or path}", "ok"

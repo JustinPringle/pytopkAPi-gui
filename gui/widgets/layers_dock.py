@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView, QDockWidget, QLabel, QMenu,
@@ -85,8 +85,9 @@ def _get_icon(cmap_name: str) -> QIcon:
 class LayersDock(QDockWidget):
     """QGIS-style layers panel docked on the left side."""
 
-    raster_selected = pyqtSignal(str, str, str)   # name, path, cmap
-    set_as_overlay  = pyqtSignal(str, str, str)   # name, path, cmap
+    raster_selected         = pyqtSignal(str, str, str)         # name, path, cmap
+    set_as_overlay          = pyqtSignal(str, str, str)         # name, path, cmap
+    layer_visibility_changed = pyqtSignal(str, str, str, str, bool)  # name, path, cmap, type, visible
 
     def __init__(self, parent=None) -> None:
         super().__init__("Layers", parent)
@@ -113,6 +114,7 @@ class LayersDock(QDockWidget):
         self._tree.setObjectName("layersTree")
         self._tree.setIconSize(QSize(_SWATCH_W + 4, _SWATCH_H + 4))
         self._tree.itemClicked.connect(self._on_clicked)
+        self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self._tree, stretch=1)
@@ -125,10 +127,12 @@ class LayersDock(QDockWidget):
         self.setMinimumWidth(200)
 
         self._groups: dict[str, QTreeWidgetItem] = {}
+        self._suppress_changed = False   # block itemChanged during bulk refresh
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def refresh_from_state(self, state) -> None:
+        self._suppress_changed = True
         self._tree.clear()
         self._groups.clear()
 
@@ -144,6 +148,8 @@ class LayersDock(QDockWidget):
             item.setIcon(0, _get_icon(cmap))
             item.setForeground(0, QColor(_LAYER_FG))
             item.setToolTip(0, path)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
             item.setData(0, Qt.ItemDataRole.UserRole,
                          {"type": "raster", "name": label, "path": path, "cmap": cmap})
 
@@ -154,8 +160,10 @@ class LayersDock(QDockWidget):
             item.setText(0, f"  {name}")
             item.setForeground(0, QColor(_VECTOR_FG))
             item.setToolTip(0, path)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
             item.setData(0, Qt.ItemDataRole.UserRole,
-                         {"type": "vector", "name": name, "path": path})
+                         {"type": "vector", "name": name, "path": path, "cmap": ""})
 
         outlets    = getattr(state, "subcatchment_outlets",  []) or []
         n_cells_l  = getattr(state, "subcatchment_n_cells",  []) or []
@@ -169,6 +177,8 @@ class LayersDock(QDockWidget):
 
         for item in self._groups.values():
             item.setExpanded(item.childCount() > 0)
+
+        self._suppress_changed = False
 
         n_ov  = len(overlay_names)
         n_sub = len(outlets)
@@ -199,6 +209,19 @@ class LayersDock(QDockWidget):
             item.setFont(0, f)
             self._groups[name] = item
         return self._groups[name]
+
+    @pyqtSlot(QTreeWidgetItem, int)
+    def _on_item_changed(self, item: QTreeWidgetItem, col: int) -> None:
+        if self._suppress_changed or col != 0:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data or data.get("type") not in ("raster", "vector"):
+            return
+        visible = item.checkState(0) == Qt.CheckState.Checked
+        self.layer_visibility_changed.emit(
+            data["name"], data["path"], data.get("cmap", ""),
+            data["type"], visible,
+        )
 
     def _on_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.ItemDataRole.UserRole)

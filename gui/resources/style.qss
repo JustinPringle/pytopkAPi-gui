@@ -405,6 +405,45 @@ QLabel#rasterStatsLabel {
     font-family: "Menlo", "Consolas", "DejaVu Sans Mono", monospace;
 }
 
+/* ── GIS canvas toolbar ──────────────────────────────────────── */
+QWidget#gisToolbar {
+    background-color: #3c3f41;
+    border-bottom: 1px solid #4a4e52;
+}
+
+QPushButton#gisToolBtn {
+    background-color: #4a4e50;
+    color: #e8e8e8;
+    border: 1px solid #606468;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 0px;
+}
+QPushButton#gisToolBtn:hover {
+    background-color: #5a5e60;
+    border-color: #888;
+}
+QPushButton#gisToolBtn:pressed,
+QPushButton#gisToolBtn:checked {
+    background-color: #1a6fc4;
+    border-color: #1a6fc4;
+}
+
+QLabel#gisCrsLabel {
+    color: #7a8290;
+    font-size: 11px;
+    font-family: "Menlo", "Consolas", "DejaVu Sans Mono", monospace;
+    padding: 0 4px;
+}
+
+QLabel#gisPixelLabel {
+    color: #9da5b0;
+    font-size: 11px;
+    font-family: "Menlo", "Consolas", "DejaVu Sans Mono", monospace;
+    padding: 0 4px;
+}
+
 /* ── Workflow project label ──────────────────────────────────── */
 QLabel#projectLabel {
     color: #7a8290;
