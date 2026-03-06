@@ -25,19 +25,21 @@ from gui.state import ProjectState
 from gui.widgets.log_dock import LogDock
 from gui.widgets.map_view import MapView
 from gui.widgets.layers_dock import LayersDock
+from gui.widgets.workflow_delegate import WorkflowDelegate
 
 # Panels (imported lazily to avoid circular imports at module level)
+# Step numbers are rendered by WorkflowDelegate — keep titles clean.
 PANEL_TITLES = [
-    "1  Study Area",
-    "2  DEM Processing",
-    "3  Watershed",
-    "4  Stream Network",
-    "5  Soil Parameters",
-    "6  Land Cover",
-    "7  Parameter Files",
-    "8  Forcing Data",
-    "9  Run Model",
-    "10  Results",
+    "Study Area",
+    "DEM Processing",
+    "Watershed",
+    "Stream Network",
+    "Soil Parameters",
+    "Land Cover",
+    "Parameter Files",
+    "Forcing Data",
+    "Run Model",
+    "Results",
 ]
 
 
@@ -144,23 +146,21 @@ class MainWindow(QMainWindow):
 
         # ── Left dock — workflow list ─────────────────────────────────────────
         self._workflow_list = QListWidget()
-        self._workflow_list.setIconSize(QSize(16, 16))
-        self._workflow_list.setSpacing(2)
-        font = QFont()
-        font.setPointSize(12)
-        self._workflow_list.setFont(font)
-        self._workflow_list.setFixedWidth(200)
+        self._workflow_list.setSpacing(0)
+        self._workflow_list.setFixedWidth(210)
+        self._workflow_list.setItemDelegate(WorkflowDelegate(self._workflow_list))
         self._populate_workflow_list()
         self._workflow_list.currentRowChanged.connect(self._activate_panel)
 
         # Project info label below the list
         self._project_label = QLabel("No project open")
         self._project_label.setWordWrap(True)
-        self._project_label.setStyleSheet("color:#888; font-size:11px; padding:4px;")
+        self._project_label.setObjectName("projectLabel")
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
         left_layout.addWidget(self._workflow_list)
         left_layout.addWidget(self._project_label)
 
@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         # ── Layers dock — below the workflow list ──────────────────────────────
         self._layers_dock = LayersDock(self)
         self._layers_dock.raster_selected.connect(self._show_layer_raster)
+        self._layers_dock.set_as_overlay.connect(self._set_layer_as_overlay)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._layers_dock)
         self.splitDockWidget(left_dock, self._layers_dock, Qt.Orientation.Vertical)
 
@@ -245,26 +246,27 @@ class MainWindow(QMainWindow):
         for i, title in enumerate(PANEL_TITLES):
             item = QListWidgetItem(title)
             done = self._state.step_complete(i)
-            item.setForeground(QColor("#2ecc71" if done else "#ecf0f1"))
-            item.setToolTip("✅ Complete" if done else "⬜ Not yet complete")
+            item.setData(Qt.ItemDataRole.UserRole, done)
+            item.setToolTip("Complete" if done else "Not yet complete")
             self._workflow_list.addItem(item)
 
     def refresh_workflow_list(self):
-        """Refresh icons/colours after state changes."""
+        """Refresh step completion state after state changes."""
         for i in range(self._workflow_list.count()):
             item = self._workflow_list.item(i)
             done = self._state.step_complete(i)
-            item.setForeground(QColor("#2ecc71" if done else "#ecf0f1"))
+            item.setData(Qt.ItemDataRole.UserRole, done)
             item.setToolTip("Complete" if done else "Not yet complete")
-        # Persist the last-used project dir whenever the list is refreshed
+        self._workflow_list.update()
+        # Persist the last-used project dir
         if self._state.project_dir:
             _save_recent(self._state.project_dir)
         # Update project info label
         if self._state.project_name:
-            cells = f"\n{self._state.n_cells:,} cells" if self._state.n_cells else ""
-            self._project_label.setText(f"{self._state.project_name}{cells}")
+            cells = f"  ·  {self._state.n_cells:,} cells" if self._state.n_cells else ""
+            self._project_label.setText(f"  {self._state.project_name}{cells}")
         else:
-            self._project_label.setText("No project open")
+            self._project_label.setText("  No project open")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Panel activation
@@ -399,6 +401,17 @@ class MainWindow(QMainWindow):
             self._centre_tabs.removeTab(1)
             self._centre_tabs.insertTab(1, canvas, "Raster")
         self.show_raster_tab()
+
+    def _set_layer_as_overlay(self, name: str, path: str, cmap: str) -> None:
+        """Called by LayersDock right-click → 'Set as Overlay'."""
+        raster_widget = self._centre_tabs.widget(1)
+        if raster_widget and hasattr(raster_widget, "set_overlay"):
+            raster_widget.set_overlay(name, path, cmap)
+            self.show_raster_tab()
+        else:
+            # No canvas open yet — open the layer as base first, then it can be
+            # set as overlay by the user from the toolbar combos.
+            self._show_layer_raster(name, path, cmap)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  File menu actions
