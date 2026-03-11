@@ -121,6 +121,8 @@ class ShapefileWorker(BaseWorker):
         )
         tmp_path = tmp.name
         tmp.close()
+        # ogr2ogr refuses to overwrite an existing GeoJSON file — remove it first
+        os.unlink(tmp_path)
 
         try:
             result = subprocess.run(

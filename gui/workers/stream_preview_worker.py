@@ -1,22 +1,26 @@
 """
 gui/workers/stream_preview_worker.py
 =====================================
-StreamPreviewWorker — background QThread that vectorises a flow-accumulation
-raster at a given threshold and returns a WGS84 GeoJSON FeatureCollection.
+StreamPreviewWorker — background QThread that renders a flow-accumulation
+raster at a given threshold as a base64 PNG image overlay (fast) and
+optionally as a simplified GeoJSON line network.
 
 NOT connected to the global start_worker() / _on_worker_finished() pipeline —
-the WatershedPanel connects its finished signal directly to its own slot so
-that the result is never written to ProjectState and the progress bar is not
-consumed.
+the WatershedPanel connects its finished signal directly to its own slot.
 
-Emits finished({"stream_geojson": <dict|None>}).
+Emits finished({
+    "stream_base64":  <str>,              # base64 PNG of stream mask
+    "stream_bounds":  [[s,w],[n,e]],      # WGS84 bounds for the image overlay
+    "stream_geojson": <dict|None>,        # optional simplified GeoJSON lines
+    "n_stream_cells": <int>,              # number of stream cells
+}).
 """
 
 from gui.workers.base_worker import BaseWorker
 
 
 class StreamPreviewWorker(BaseWorker):
-    """Compute a stream-network GeoJSON in the background."""
+    """Compute a stream-network overlay in the background."""
 
     def __init__(self, accum_path: str, threshold: int):
         super().__init__()
@@ -30,11 +34,12 @@ class StreamPreviewWorker(BaseWorker):
             self.error.emit(f"[StreamPreviewWorker] {exc}")
 
     def _compute(self) -> None:
+        import base64
+        import io
+
         import numpy as np
         import rasterio
-        from rasterio.features import shapes as rio_shapes
-        from shapely.geometry import shape
-        from shapely.ops import unary_union, transform as shapely_transform
+        from PIL import Image
         from pyproj import Transformer
 
         with rasterio.open(self._accum_path) as src:
@@ -42,49 +47,56 @@ class StreamPreviewWorker(BaseWorker):
             transform = src.transform
             crs       = src.crs
             nodata    = src.nodata
+            bounds    = src.bounds
 
         # Mask nodata before thresholding
         if nodata is not None:
             accum[accum == nodata] = 0
 
         # Binary stream mask
-        stream_mask = (np.abs(accum) >= self._threshold).astype("uint8")
-        if stream_mask.sum() == 0:
-            self.finished.emit({"stream_geojson": None})
+        stream_mask = np.abs(accum) >= self._threshold
+        n_cells = int(stream_mask.sum())
+
+        if n_cells == 0:
+            self.finished.emit({"stream_geojson": None, "n_stream_cells": 0})
             return
 
-        # Vectorise connected stream regions
-        geoms = [
-            shape(geom)
-            for geom, val in rio_shapes(stream_mask, transform=transform)
-            if val == 1
-        ]
-        if not geoms:
-            self.finished.emit({"stream_geojson": None})
-            return
+        # ── Fast path: render stream mask as a transparent blue PNG ────────
+        h, w = stream_mask.shape
+        # Downsample for very large rasters (keep under 2048px longest side)
+        max_dim = 2048
+        scale = min(1.0, max_dim / max(h, w))
+        if scale < 1.0:
+            new_h = max(1, int(h * scale))
+            new_w = max(1, int(w * scale))
+            # Use PIL nearest-neighbor resize (no scipy dependency)
+            mask_img = Image.fromarray(stream_mask.astype(np.uint8) * 255, "L")
+            mask_img = mask_img.resize((new_w, new_h), Image.NEAREST)
+            stream_mask = np.array(mask_img) > 127
 
-        # Simplify + limit to 5 000 polygons for map performance
-        cell_size = abs(transform.a)
-        geoms = [g.simplify(cell_size * 0.5, preserve_topology=False) for g in geoms]
-        geoms = [g for g in geoms if not g.is_empty][:5000]
+        # Create RGBA image: streams = cyan, non-streams = transparent
+        rgba = np.zeros((*stream_mask.shape, 4), dtype=np.uint8)
+        rgba[stream_mask, 0] = 0     # R
+        rgba[stream_mask, 1] = 191   # G  (#00BFFF = deep sky blue)
+        rgba[stream_mask, 2] = 255   # B
+        rgba[stream_mask, 3] = 200   # A
 
-        # Reproject to WGS84
-        trans = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        img = Image.fromarray(rgba, "RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", compress_level=6)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        features = []
-        for g in geoms:
-            g_wgs = shapely_transform(trans.transform, g)
-            if not g_wgs.is_empty:
-                features.append({
-                    "type":       "Feature",
-                    "geometry":   g_wgs.__geo_interface__,
-                    "properties": {},
-                })
-
-        if not features:
-            self.finished.emit({"stream_geojson": None})
-            return
+        # Reproject bounds to WGS84
+        if crs and not crs.is_geographic:
+            tr = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+            west, south = tr.transform(bounds.left, bounds.bottom)
+            east, north = tr.transform(bounds.right, bounds.top)
+        else:
+            west, south, east, north = bounds.left, bounds.bottom, bounds.right, bounds.top
 
         self.finished.emit({
-            "stream_geojson": {"type": "FeatureCollection", "features": features}
+            "stream_base64": b64,
+            "stream_bounds": [[south, west], [north, east]],
+            "n_stream_cells": n_cells,
+            "stream_geojson": None,  # no longer vectorizing for speed
         })

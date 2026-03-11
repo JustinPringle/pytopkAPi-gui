@@ -41,7 +41,12 @@ class ProjectState:
     slope_path:      Optional[str] = None   # slope in degrees (r.slope.aspect)
     streamnet_path:  Optional[str] = None   # stream network binary (1=stream, 0=land)
     strahler_path:   Optional[str] = None   # Strahler order raster
+    streams_gpkg_path: Optional[str] = None # stream vector (GeoPackage from r.stream.order)
+    basins_path:     Optional[str] = None   # r.watershed auto-delineated basins
     hillshade_path:  Optional[str] = None   # gdaldem hillshade output
+    relief_path:     Optional[str] = None   # GRASS r.relief shaded relief
+    shaded_relief_path: Optional[str] = None  # GRASS r.shade composite
+    basins_gpkg_path: Optional[str] = None  # basins as vector (GeoPackage)
 
     # ── Soil raster paths ─────────────────────────────────────────────────────
     hwsd_path:          Optional[str]  = None
@@ -72,6 +77,27 @@ class ProjectState:
     # ── Computed scalars ──────────────────────────────────────────────────────
     n_cells:          Optional[int] = None
     stream_threshold: int = 500   # accumulation cells → stream initiation
+
+    # ── Terrain rendering parameters ─────────────────────────────────────────
+    relief_zscale:       float = 3.0    # vertical exaggeration for r.relief
+    relief_azimuth:      float = 315.0  # sun azimuth (degrees, NW convention)
+    relief_altitude:     float = 45.0   # sun altitude (degrees above horizon)
+    relief_brighten:     int   = 30     # r.shade brighten for terrain composite
+    accum_brighten:      int   = 80     # r.shade brighten for accumulation composite
+    elevation_colors:    str   = "elevation"  # GRASS r.colors scheme
+
+    # ── Display-only rendering parameters ────────────────────────────────────
+    stream_width_scale:     float = 0.8   # Leaflet px per Strahler order unit
+    hillshade_blend_weight: float = 0.6   # 0=no shading, 1=full multiply blend
+    layer_display_limits:   dict  = field(default_factory=dict)
+    # layer_display_limits: {state_attr: {"vmin": float, "vmax": float}}
+    # Either key may be absent (one-sided clamp) or both absent (full stretch).
+    layer_colormaps:        dict  = field(default_factory=lambda: {
+        "accum_path":    "Blues",
+        "slope_path":    "YlOrRd",
+        "filled_dem_path": "terrain",
+        "proj_dem_path": "terrain",
+    })
 
     # ── Step completion flags ─────────────────────────────────────────────────
     soil_ready:      bool = False
@@ -178,6 +204,33 @@ class ProjectState:
             self.results_path is not None,                                   # 9 Results
         ]
         return checks[idx] if 0 <= idx < len(checks) else False
+
+    def stage_status(self, idx: int) -> str:
+        """Return 'none', 'partial', or 'done' for a 5-stage workflow.
+
+        Stages:
+            0  Project Setup       (old steps 0-1)
+            1  Catchment & Streams (old steps 2-3)
+            2  Surface Properties  (old steps 4-5)
+            3  Run Model           (old steps 6-8)
+            4  Results             (old step  9)
+        """
+        stage_steps = [
+            [0, 1],
+            [2, 3],
+            [4, 5],
+            [6, 7, 8],
+            [9],
+        ]
+        if idx < 0 or idx >= len(stage_steps):
+            return "none"
+        steps = stage_steps[idx]
+        done_count = sum(1 for s in steps if self.step_complete(s))
+        if done_count == len(steps):
+            return "done"
+        elif done_count > 0:
+            return "partial"
+        return "none"
 
     def subdirs(self) -> dict:
         """Return standard subdirectory paths (created by StudyAreaPanel)."""

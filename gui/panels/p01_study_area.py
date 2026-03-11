@@ -10,7 +10,7 @@ Step 1 — Study Area
 
 import os
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSlot
+from PyQt6.QtCore import QUrl, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QGroupBox,
@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.panels import BasePanel
-from gui.widgets.map_widget import MapWidget
 from gui.workers.dem_worker import DemWorker
 
 
@@ -47,7 +46,6 @@ class StudyAreaPanel(BasePanel):
 
     def __init__(self, state, main_window, parent=None):
         super().__init__(state, main_window, parent)
-        self._map_widget: MapWidget | None = None
 
     # ──────────────────────────────────────────────────────────────────────────
     # BasePanel interface
@@ -122,6 +120,12 @@ class StudyAreaPanel(BasePanel):
         self._aoi_label.setStyleSheet("color:#aaa;")
         aoi_form.addRow("", self._aoi_label)
 
+        self._clear_aoi_btn = QPushButton("Clear AOI")
+        self._clear_aoi_btn.setToolTip("Remove the drawn AOI rectangle and start over")
+        self._clear_aoi_btn.setVisible(False)
+        self._clear_aoi_btn.clicked.connect(self._clear_aoi)
+        aoi_form.addRow("", self._clear_aoi_btn)
+
         layout.addWidget(aoi_box)
 
         # ── DEM group ─────────────────────────────────────────────────────
@@ -193,10 +197,17 @@ class StudyAreaPanel(BasePanel):
         return self._form
 
     def on_activated(self) -> None:
-        """Load the AOI map into the centre Map tab."""
-        self._ensure_map_widget()
-        self._mw.set_map_widget(self._map_widget)
+        """Set up the shared map for AOI rectangle drawing."""
+        mv = self._mw._map_view
+        mv.clear_all_overlays()
+        mv.set_draw_mode('rectangle')
+        self._mw.set_map_hint("Draw a rectangle on the map to define the Area of Interest")
         self._mw.show_map_tab()
+
+        if self._state.bbox:
+            b = self._state.bbox
+            mv.add_rectangle(b['south'], b['west'], b['north'], b['east'])
+            mv.fit_bounds(b['south'], b['west'], b['north'], b['east'])
 
     def refresh_from_state(self) -> None:
         if self._form is None:
@@ -211,7 +222,10 @@ class StudyAreaPanel(BasePanel):
         if s.ot_api_key and not self._api_key_edit.text():
             self._api_key_edit.setText(s.ot_api_key)
         if s.dem_path:
-            self._dem_status_label.setText(f"✅ {os.path.basename(s.dem_path)}")
+            self._dem_status_label.setText(
+                f"✅ {os.path.basename(s.dem_path)}\n"
+                "Click 'Process DEM' in the ribbon to continue."
+            )
             self._dem_status_label.setStyleSheet("color:#2ecc71; font-size:11px;")
         if s.bbox:
             b = s.bbox
@@ -227,19 +241,8 @@ class StudyAreaPanel(BasePanel):
                 break
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Map widget setup
+    # Draw signal handler (routed from MainWindow)
     # ──────────────────────────────────────────────────────────────────────────
-
-    def _ensure_map_widget(self):
-        if self._map_widget is not None:
-            return
-        self._map_widget = MapWidget()
-        self._map_widget.bbox_drawn.connect(self._on_bbox_drawn)
-        # Load a default view centred on Umhlanga
-        centre = (-29.71, 31.06)
-        bbox = self._state.bbox
-        html = MapWidget.build_aoi_map(centre=centre, existing_bbox=bbox)
-        self._map_widget.load_map(html)
 
     @pyqtSlot(dict)
     def _on_bbox_drawn(self, bbox: dict):
@@ -255,6 +258,7 @@ class StudyAreaPanel(BasePanel):
             f"AOI set: N={b['north']:.4f} S={b['south']:.4f} "
             f"W={b['west']:.4f} E={b['east']:.4f}", "ok"
         )
+        self._mw.set_map_hint("AOI set — scroll down to download the DEM")
         self._mw.refresh_workflow_list()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -285,6 +289,8 @@ class StudyAreaPanel(BasePanel):
             self._dir_edit.setText(path)
 
     def _create_project(self):
+        from gui.state import ProjectState
+
         name = self._name_edit.text().strip()
         base = self._dir_edit.text().strip() or os.path.expanduser("~/Documents/projects")
         if not name:
@@ -292,14 +298,40 @@ class StudyAreaPanel(BasePanel):
             return
 
         project_dir = os.path.join(base, name)
+        is_new = (project_dir != self._state.project_dir)
+
         for sub in ["rasters", "parameter_files", "forcing_variables", "results"]:
             os.makedirs(os.path.join(project_dir, sub), exist_ok=True)
 
-        self._state.project_name = name
-        self._state.project_dir  = project_dir
+        if is_new:
+            # Preserve cross-project user preferences
+            saved_api_key = self._state.ot_api_key
+            saved_crs     = self._state.crs
+
+            state_file = os.path.join(project_dir, "project_state.json")
+            if os.path.exists(state_file):
+                fresh = ProjectState.load(project_dir)
+                self.log(f"Opened existing project: {project_dir}", "ok")
+            else:
+                fresh = ProjectState(
+                    project_name=name,
+                    project_dir=project_dir,
+                    crs=saved_crs,
+                    ot_api_key=saved_api_key,
+                )
+                self.log(f"New project created at: {project_dir}", "ok")
+
+            # Reset the shared state object in-place so all panels see the change
+            self._state.__dict__.update(vars(fresh))
+        else:
+            self._state.project_name = name
+            self._state.project_dir  = project_dir
+            self.log(f"Project re-opened: {project_dir}", "ok")
+
         self._state.save()
+        self.refresh_from_state()
+        self.on_activated()
         self._mw.refresh_workflow_list()
-        self.log(f"Project created at: {project_dir}", "ok")
 
     def _on_crs_changed(self, label: str):
         code = CRS_OPTIONS.get(label, "EPSG:32736")

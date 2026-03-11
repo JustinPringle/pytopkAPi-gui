@@ -1,0 +1,669 @@
+<!doctype html>
+
+<html class="no-js" lang="en">
+
+<head>
+
+
+	<!-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+	Brendan Harmon
+
+	Index Theme by https://jekyllthemes.io
+	Premium + free Jekyll themes for your blog or website.
+
+	- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -->
+
+
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+
+	<!-- Page Info -->
+	<link rel="shortcut icon" href="/images/favicon.png">
+	<title>Watersheds in GRASS GIS – Brendan Harmon</title>
+	<meta name="description" content="A tutorial on watershed analysis in GRASS GIS.">
+
+	<!-- Twitter Card -->
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="Watersheds in GRASS GIS – Brendan Harmon">
+	<meta name="twitter:description" content="A tutorial on watershed analysis in GRASS GIS.">
+	<meta name="twitter:image:src" content="https://baharmon.github.iohttps://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/">
+
+	<!-- Facebook OpenGraph -->
+	<meta property="og:title" content="Watersheds in GRASS GIS – Brendan Harmon" />
+	<meta property="og:description" content="A tutorial on watershed analysis in GRASS GIS." />
+	<meta property="og:image" content="https://baharmon.github.iohttps://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/" />
+
+	
+	<!-- Font Embed Code -->
+	<link href="https://fonts.googleapis.com/css?family=Lato:400,600" rel="stylesheet">
+	
+
+	<!-- Styles -->
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="stylesheet" href="/css/style.css">
+
+	<!-- Icons -->
+	<link rel="stylesheet" href="/assets/css/academicons.css">
+	<script defer src="https://use.fontawesome.com/releases/v5.1.1/js/solid.js" integrity="sha384-GXi56ipjsBwAe6v5X4xSrVNXGOmpdJYZEEh/0/GqJ3JTHsfDsF8v0YQvZCJYAiGu" crossorigin="anonymous"></script>
+	<script defer src="https://use.fontawesome.com/releases/v5.1.1/js/brands.js" integrity="sha384-0inRy4HkP0hJ038ZyfQ4vLl+F4POKbqnaUB6ewmU4dWP0ki8Q27A0VFiVRIpscvL" crossorigin="anonymous"></script>
+	<script defer src="https://use.fontawesome.com/releases/v5.1.1/js/fontawesome.js" integrity="sha384-NY6PHjYLP2f+gL3uaVfqUZImmw71ArL9+Roi9o+I4+RBqArA2CfW1sJ1wkABFfPe" crossorigin="anonymous"></script>
+
+	
+	<!-- Custom Styles -->
+	<style></style>
+	
+
+	
+	<!-- Analytics Code -->
+	
+	
+
+	
+	<!-- Extra Header JS Code -->
+	
+	
+
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-50152123-2"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-50152123-2');
+</script>
+
+
+	<!-- for leaflet support -->
+	
+
+</head>
+
+<body class="loading ajax-loading" data-site-url="https://baharmon.github.io" data-page-url="/watersheds-in-grass">
+
+	<header class="header">
+
+	<div class="header__content">
+
+		
+		<a href="/" class="header__title">
+			Brendan Harmon
+		</a>
+		
+
+		<h1 class="header__tagline"></h1>
+
+		<div class="menu">
+			<div class="menu__toggle js-menu-toggle">
+				<div class="menu__toggle__icon"><span></span></div>
+			</div>
+			<div class="menu__wrap">
+				<ul class="menu__list">
+					
+					<li class="menu__list__item">
+						<a href="https://baharmon.github.io/about" class="menu__list__item__link">About</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="/" class="menu__list__item__link">Projects</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="/courses" class="menu__list__item__link">Courses</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="https://baharmon.github.io/tutorials" class="menu__list__item__link">Tutorials</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="https://github.com/baharmon/" class="menu__list__item__link">Code</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="https://baharmon.github.io/datasets" class="menu__list__item__link">Data</a>
+					</li>
+					
+					<li class="menu__list__item">
+						<a href="/publications" class="menu__list__item__link">Publications</a>
+					</li>
+					
+				</ul>
+			</div>
+		</div>
+
+		<div class="projects-menu">
+			<ul class="menu__list">
+				
+				<li class="menu__list__item">
+					<a href="/spatial-science" class="menu__list__item__link">Spatial Science</a>
+				</li>
+				
+				<li class="menu__list__item">
+					<a href="/soundscapes" class="menu__list__item__link">Soundscapes</a>
+				</li>
+				
+				<li class="menu__list__item">
+					<a href="/heritage-preservation" class="menu__list__item__link">Heritage Preservation</a>
+				</li>
+				
+				<li class="menu__list__item">
+					<a href="/field-recordings" class="menu__list__item__link">Field Recordings</a>
+				</li>
+				
+				<li class="menu__list__item">
+					<a href="/ecological-robotics" class="menu__list__item__link">Ecological Robotics</a>
+				</li>
+				
+				<li class="menu__list__item">
+					<a href="/computational-design" class="menu__list__item__link">Computational Design</a>
+				</li>
+				
+			</ul>
+		</div>
+
+		<div class="header__lower">
+
+			<ul class="socials">
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	<li class="socials__item">
+		<a href="youtube.com/@baharmon" target="_blank" class="socials__item__link" title="Youtube">
+			<i class="fab fa-youtube" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	<li class="socials__item">
+		<a href="https://github.com/baharmon/" target="_blank" class="socials__item__link" title="Github">
+			<i class="fab fa-github" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	<li class="socials__item">
+		<a href="https://www.researchgate.net/profile/Brendan_Harmon2" target="_blank" class="socials__item__link" title="Researchgate">
+			<i class="fab fa-researchgate" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+</ul>
+
+
+			<div class="footer__copyright">
+				<span>© 2026 Brendan Harmon</span>
+				<a href="https://jekyllthemes.io" target="_blank">Jekyll Themes</a>
+			</div>
+
+		</div>
+
+	</div>
+
+  <link rel="stylesheet" href="/assets/css/mapskin.min.css">
+	<link rel="stylesheet" href="/assets/css/academicons.min.css">
+	<link href="https://fonts.googleapis.com/css2?family=Lato&display=swap" rel="stylesheet">
+	<script src="https://use.fontawesome.com/7e6dc4b649.js"></script>
+
+</header>
+
+
+	<div class="loader"><svg width="120" height="30" viewBox="0 0 120 30" xmlns="http://www.w3.org/2000/svg"><circle cx="15" cy="15" r="15"><animate attributeName="r" from="15" to="15" begin="0s" dur="0.8s" values="15;9;15" calcMode="linear" repeatCount="indefinite" /><animate attributeName="fill-opacity" from="1" to="1" begin="0s" dur="0.8s" values="1;.5;1" calcMode="linear" repeatCount="indefinite" /></circle><circle cx="60" cy="15" r="9" fill-opacity="0.3"><animate attributeName="r" from="9" to="9" begin="0s" dur="0.8s" values="9;15;9" calcMode="linear" repeatCount="indefinite" /><animate attributeName="fill-opacity" from="0.5" to="0.5" begin="0s" dur="0.8s" values=".5;1;.5" calcMode="linear" repeatCount="indefinite" /></circle><circle cx="105" cy="15" r="15"><animate attributeName="r" from="15" to="15" begin="0s" dur="0.8s" values="15;9;15" calcMode="linear" repeatCount="indefinite" /><animate attributeName="fill-opacity" from="1" to="1" begin="0s" dur="0.8s" values="1;.5;1" calcMode="linear" repeatCount="indefinite" /></circle></svg></div>
+
+	<div class="page-loader"></div>
+
+	<div class="page">
+
+		<div class="page__content" data-page-title="Watersheds in GRASS GIS – Brendan Harmon">
+
+			<section class="intro">
+
+	<div class="wrap">
+
+		<h1>Watersheds in GRASS GIS</h1>
+		<p>A tutorial on watershed analysis in GRASS GIS.</p>
+
+	</div>
+
+</section>
+
+<section class="single">
+
+	<div class="wrap">
+
+		<p><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/elevation-with-streams.png" alt="Watersheds" /></p>
+
+<p><strong>Contents</strong></p>
+<ul id="markdown-toc">
+  <li><a href="#terrain-acquisition" id="markdown-toc-terrain-acquisition">Terrain Acquisition</a></li>
+  <li><a href="#watershed-delineation" id="markdown-toc-watershed-delineation">Watershed Delineation</a></li>
+  <li><a href="#flow-accumulation" id="markdown-toc-flow-accumulation">Flow Accumulation</a></li>
+  <li><a href="#stream-order" id="markdown-toc-stream-order">Stream Order</a></li>
+  <li><a href="#data-sources" id="markdown-toc-data-sources">Data Sources</a></li>
+</ul>
+
+<hr />
+
+<h2 id="terrain-acquisition">Terrain Acquisition</h2>
+<p>This tutorial will use the terrain data
+from the National Elevation Dataset (NED).
+Either create a new location in GRASS using EPSG code 26915
+or download and extract the <i class="ms ms-database"></i>
+<a href="https://zenodo.org/record/3359620/files/louisiana-dataset.zip?download=1">Louisiana Dataset for GRASS GIS</a>.
+Start <i class="ms ms-grass-gis"></i> GRASS GIS,
+set the GRASS GIS database directory,
+and create or select your location and mapset.
+Then use the addon module
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.in.usgs.html">r.in.usgs</a>
+to automatically import terrain data from the National Elevation Dataset.
+Alternatively you can download tiles of National Elevation Dataset
+from the <a href="https://viewer.nationalmap.gov/basic/">National Map</a>
+and then import, reproject, and patch them with
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.import.html">r.import</a>
+and <a href="https://grass.osgeo.org/grass-stable/manuals/r.patch.html">r.patch</a>.</p>
+
+<p>To automatically import data from the National Elevation Dataset,
+first install the addon module with
+<a href="https://grass.osgeo.org/grass-stable/manuals/g.extension.html">g.extension</a>,
+then set the region with
+<a href="https://grass.osgeo.org/grass-stable/manuals/g.region.html">g.region</a>,
+and run
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.in.usgs.html">r.in.usgs</a>.
+With <a href="https://grass.osgeo.org/grass-stable/manuals/g.region.html">g.region</a>
+set the extent of the computational region
+to north, south, east, and west boundaries
+for Tunica Hills, Louisiana, USA.
+For <a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.in.usgs.html">r.in.usgs</a>
+set the product to <code class="language-plaintext highlighter-rouge">ned</code> for the National Elevation Dataset,
+set the NED dataset to either 1 or 1/3 arcsecond,
+and optionally set the resampling method to bilinear.
+To work with lower resolution data
+set the resolution of the region to 30m
+with <a href="https://grass.osgeo.org/grass-stable/manuals/g.region.html">g.region</a>
+and import the national elevation dataset
+at 1 arcsecond resolution with
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.in.usgs.html">r.in.usgs</a>.
+To work with higher resolution data
+set the resolution of the region to 10m
+with <a href="https://grass.osgeo.org/grass-stable/manuals/g.region.html">g.region</a>
+and import the national elevation dataset
+at 1/3 arcsecond resolution with
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.in.usgs.html">r.in.usgs</a>.
+To better visualize the imported terrain data,
+compute shaded relief with the module
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.relief.html">r.relief</a>
+and then overlay the shaded relief and the digital elevation model with
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.shade.html">r.shade</a>.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>g.region n=3432678.24028746 s=3420115.23940805 e=646814.51098306 w=634251.50105829 res=30 save=tunica_hills
+g.extension extension=r.in.usgs
+r.in.usgs product=ned output_name=elevation output_directory=usgs ned_dataset=ned1sec resampling_method=bilinear
+r.relief input=elevation output=relief zscale=3
+r.shade shade=relief color=elevation output=shaded_relief brighten=30
+d.legend raster=elevation at=60,95,2,3.5 font=Lato-Regular fontsize=14
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Digital Elevation Model</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/elevation.png" alt="Elevation" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="watershed-delineation">Watershed Delineation</h2>
+<p>A watershed is a region
+in which all of the surface water
+drains to an outlet.
+Watersheds are nested and vary in scale.
+A river basin can be subdivided
+into smaller watersheds for each of its streams.
+The watershed for each stream can be further subdivided
+into smaller watersheds for each its reaches
+and so forth.
+Watersheds can be computed from digital elevation models.</p>
+
+<p>Compute the boundaries of this basin and its watersheds with the module
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.watershed.html">r.watershed</a>.
+Set a threshold to determine the minimum size of
+(i.e. number of cells in) the watershed.
+To model a large basin draining most of the study region
+set the threshold to 10,000 cells
+at 30 meter (i.e. 1 arcsecond) resolution.
+If you are using a 1/3 arcsecond digital elevation model
+at 10 meter resolution,
+you will need to experiment to find the correct threshold value.
+Convert the resulting raster map of basins to a vector map
+with the module <a href="https://grass.osgeo.org/grass-stable/manuals/r.to.vect">r.to.vect</a>
+and then extract the basin of interest with
+<a href="https://grass.osgeo.org/grass-stable/manuals/v.extract">v.extract</a>
+or the <code class="language-plaintext highlighter-rouge">select vector features</code> button.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r.watershed elevation=elevation threshold=10000 basin=basins
+r.to.vect -s input=basins output=basins type=area
+v.extract input=basins cats=3 output=basin
+d.vect map=basin color=white fill_color=none width=3
+</code></pre></div></div>
+
+<p>To model watersheds for the larger streams within the basin,
+first set a raster mask to the vector map of the basin
+with <a href="https://grass.osgeo.org/grass-stable/manuals/r.mask.html">r.mask</a>
+and then run
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.watershed.html">r.watershed</a>
+with the threshold set to 1,000 cells at 30 meter resolution.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r.mask vector=basin
+r.watershed elevation=elevation threshold=1000 basin=watersheds
+r.to.vect -s input=watersheds output=watersheds type=area
+d.vect map=watersheds color=white fill_color=none width=1
+r.mask -r
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Watersheds</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/watershed-raster.png" alt="Watersheds" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Watersheds with Shaded Relief</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/masked-watersheds.png" alt="Watersheds" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Optionally layer masked and unmasked shaded relief maps
+to visualize the topography inside and outside of the basin.
+First set the mask to the basin
+with <a href="https://grass.osgeo.org/grass-stable/manuals/r.mask.html">r.mask</a>,
+then
+with <a href="https://grass.osgeo.org/grass-stable/manuals/r.mapcalc.html">r.mapcalc</a>
+use map algebra to create a masked version of the shaded relief.
+Remove the mask and set the opacity of the original shaded relief map to 50%.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r.mask vector=basin
+r.mapcalc expression="masked_relief = shaded_relief"
+r.mask -r
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="flow-accumulation">Flow Accumulation</h2>
+<p>Flow accumulation is number of cells that drain through each cell
+and can be used to model stream networks.
+Compute flow accumulation with
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.watershed.html">r.watershed</a>.
+Optionally set the <code class="language-plaintext highlighter-rouge">-a</code> and <code class="language-plaintext highlighter-rouge">-b</code> flags
+to use positive flow accumulation and beautify flat areas.
+To better visualize the flow accumulation,
+drape it over the relief map with
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.shade.html">r.shade</a>.
+Add a legend with the <code class="language-plaintext highlighter-rouge">-l</code> flag for logarithmic scaling.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r.mask vector=basin
+r.watershed -a -b elevation=elevation threshold=10000 accumulation=flow_accumulation
+r.shade shade=relief color=flow_accumulation output=shaded_accumulation brighten=80
+d.legend -l raster=flow_accumulation at=60,95,2,3.5 font=Lato-Regular fontsize=14
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Flow Accumulation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/flow-accumulation.png" alt="Flow Accumulation" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="stream-order">Stream Order</h2>
+<p>Use the r.stream
+family of modules to extract the stream network
+and compute the order of the streams.
+First extract the stream network from the flow accumulation with the module
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.stream.extract.html">r.stream.extract</a>.
+Generate raster maps of streams and flow directions.
+To extract only larger streams
+set the minimum threshold for flow accumulation to 200.
+Then use <a href="https://grass.osgeo.org/grass-stable/manuals/g.extension.html">g.extension</a>
+to install the addon module
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.stream.order.html">r.stream.order</a>.
+Use the digital elevation model, flow accumulation, stream raster,
+and flow direction maps
+to compute stream order with
+<a href="https://grass.osgeo.org/grass-stable/manuals/addons/r.stream.order.html">r.stream.order</a>.
+The resulting map of streams will have an attribute table
+describing the topology of the stream network including
+Strahler’s, Horton’s, Shreve’s, and Hack’s stream orders.
+To visualize stream order
+set the line weight of the vector map of streams
+to one of the stream order attributes in the table
+with <a href="https://grass.osgeo.org/grass-stable/manuals/d.vect.html">d.vect</a>.
+Set the symbol size to zero to hide the stream vertices.
+Optionally add a scale factor for the line width.
+Then set the color table to the same stream order attribute with
+<a href="https://grass.osgeo.org/grass-stable/manuals/v.colors.html">v.colors</a>.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r.stream.extract elevation=elevation accumulation=flow_accumulation threshold=200 stream_raster=stream_raster  direction=flow_direction
+r.stream.order stream_rast=stream_raster direction=flow_direction elevation=elevation accumulation=flow_accumulation stream_vect=streams strahler=strahler
+r.colors map=strahler color=water
+d.vect map=streams width_column=strahler size=0
+v.colors map=streams use=attr column=strahler color=water
+d.legend raster=strahler at=85,95,2,3.5 font=Lato-Regular fontsize=14
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Strahler Stream Order</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/stream-order-legend.png" alt="Stream Order" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Shaded Relief with Stream Network</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center"><img src="https://media.githubusercontent.com/media/baharmon/baharmon.github.io/master/images/tunica-hills/elevation-with-streams.png" alt="Shaded relief with streams" /></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="data-sources">Data Sources</h2>
+<ul>
+  <li>National Elevation Dataset via the <a href="https://viewer.nationalmap.gov/basic/">National Map</a></li>
+  <li>Watershed Boundary Dataset via the <a href="https://viewer.nationalmap.gov/basic/">National Map</a></li>
+  <li>National Hydrography Dataset via the <a href="https://viewer.nationalmap.gov/basic/">National Map</a></li>
+  <li>NHDPlus High Resolution via the <a href="https://viewer.nationalmap.gov/basic/">National Map</a></li>
+</ul>
+
+
+	</div>
+
+</section>
+
+
+		</div>
+
+	</div>
+
+	<footer class="footer">
+
+	<ul class="socials">
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	<li class="socials__item">
+		<a href="youtube.com/@baharmon" target="_blank" class="socials__item__link" title="Youtube">
+			<i class="fab fa-youtube" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	<li class="socials__item">
+		<a href="https://github.com/baharmon/" target="_blank" class="socials__item__link" title="Github">
+			<i class="fab fa-github" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	<li class="socials__item">
+		<a href="https://www.researchgate.net/profile/Brendan_Harmon2" target="_blank" class="socials__item__link" title="Researchgate">
+			<i class="fab fa-researchgate" aria-hidden="true"></i>
+		</a>
+	</li>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+</ul>
+
+
+	<div class="footer__copyright">
+		<span>© 2026 Brendan Harmon</span>
+		<a href="https://jekyllthemes.io" target="_blank">Jekyll Themes</a>
+	</div>
+
+</footer>
+
+
+	<!-- Javascript Assets -->
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+	<script src="/js/index-min.js"></script>
+
+	
+	<!-- Extra Footer JS Code -->
+	
+	
+
+	<!-- for mathjax support -->
+	
+
+</body>
+
+</html>

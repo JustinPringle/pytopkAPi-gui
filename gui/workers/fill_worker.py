@@ -10,20 +10,15 @@ The temporary script runs inside a GRASS session and calls:
     r.in.gdal    → import the projected DEM
     g.region     → set computational region to match the DEM
     r.fill.dir   → fill depressions and compute flow direction (GRASS 1-8 coding)
-    r.watershed  → flow accumulation + drainage direction (for r.water.outlet)
+    r.watershed  → flow accumulation + drainage direction + basins
+    r.relief     → shaded relief raster
+    r.shade      → composite elevation draped over relief
+    r.to.vect    → convert basins raster to vector polygons
     r.out.gdal   → export all results as GeoTIFF
+    v.out.ogr    → export basins vector as GeoPackage
 
-Emits finished({
-    "filled_dem_path": ...,   # depression-free DEM (GeoTIFF)
-    "fdir_path":       ...,   # flow direction, GRASS 1-8 coding (GeoTIFF Int16)
-    "accum_path":      ...,   # flow accumulation in cells (GeoTIFF Float64)
-    "drain_ws_path":   ...,   # r.watershed drainage direction (for r.water.outlet)
-})
-
-Why GRASS over pysheds?
-    pysheds outputs ESRI D8 coding (1/2/4/8/16/32/64/128) that must be recoded
-    to GRASS convention, which is error-prone. GRASS r.fill.dir natively writes
-    GRASS 1-8 — exactly what PyTOPKAPI create_file.py expects.
+Follows the GRASS watershed tutorial:
+    https://baharmon.github.io/watersheds-in-grass
 """
 
 import os
@@ -32,6 +27,12 @@ import subprocess
 import tempfile
 
 from gui.workers.base_worker import BaseWorker
+
+# Known non-fatal GDAL/GRASS messages to suppress from the log
+_SUPPRESS_PATTERNS = [
+    "SetColorTable() only supported for",
+    "color table of type",
+]
 
 
 class FillWorker(BaseWorker):
@@ -48,20 +49,26 @@ class FillWorker(BaseWorker):
 
     def _grass_all(self) -> None:
         """
-        Single GRASS session:
+        Single GRASS session following the watershed tutorial:
           r.fill.dir  → filled DEM + flow direction (GRASS 1-8)
-          r.watershed → accumulation + drainage direction
+          r.watershed → accumulation + drainage direction + basins
+          r.relief    → shaded relief
+          r.shade     → composite (elevation draped over relief)
+          r.to.vect   → basins as vector polygons
         """
         import rasterio
 
         state   = self._state
-        in_path = state.proj_dem_path
+        # Prefer clipped DEM (basin selection) → gives fine-detail analysis
+        in_path = (
+            state.clipped_dem_path if (state.clipped_dem_path and os.path.exists(state.clipped_dem_path))
+            else state.proj_dem_path
+        )
 
         if not in_path or not os.path.exists(in_path):
             self.error.emit(
-                "Projected DEM not found.\n"
-                "Use 'Reproject DEM' above, or load an existing DEM with the "
-                "'Load Existing Rasters' browse button."
+                "No DEM found to process.\n"
+                "Either reproject the downloaded DEM, or clip to a basin first."
             )
             return
 
@@ -80,14 +87,24 @@ class FillWorker(BaseWorker):
         out_dir = os.path.join(state.project_dir, "rasters")
         os.makedirs(out_dir, exist_ok=True)
 
-        filled_path   = os.path.join(out_dir, "filled_dem.tif")
-        fdir_path     = os.path.join(out_dir, "flow_dir.tif")
-        accum_path    = os.path.join(out_dir, "flow_accum.tif")
-        drain_ws_path = os.path.join(out_dir, "drain_ws.tif")
+        filled_path     = os.path.join(out_dir, "filled_dem.tif")
+        fdir_path       = os.path.join(out_dir, "flow_dir.tif")
+        accum_path      = os.path.join(out_dir, "flow_accum.tif")
+        drain_ws_path   = os.path.join(out_dir, "drain_ws.tif")
+        basins_path     = os.path.join(out_dir, "basins.tif")
+        relief_path     = os.path.join(out_dir, "relief.tif")
+        shaded_path     = os.path.join(out_dir, "shaded_relief.tif")
+        basins_gpkg     = os.path.join(out_dir, "basins.gpkg")
+        # Temp paths for R/G/B band exports (merged into 3-band after GRASS)
+        shaded_r_path   = os.path.join(out_dir, "shaded_r.tif")
+        shaded_g_path   = os.path.join(out_dir, "shaded_g.tif")
+        shaded_b_path   = os.path.join(out_dir, "shaded_b.tif")
+
+        # Threshold for r.watershed basin delineation (from state or default)
+        threshold = getattr(state, "stream_threshold", 500)
+        zscale    = getattr(state, "relief_zscale", 3.0)
 
         # ── Build the GRASS Python script ─────────────────────────────────
-        #   This script runs inside the GRASS --tmp-location context and only
-        #   imports grass.script (which GRASS adds to PYTHONPATH automatically).
         lines = [
             "import grass.script as gs",
             "",
@@ -100,10 +117,35 @@ class FillWorker(BaseWorker):
             "gs.run_command('r.fill.dir', input='dem', output='filled',",
             "               direction='fdir', overwrite=True)",
             "",
-            "# ── Flow accumulation + drainage direction (for r.water.outlet) ─",
-            "print('GRASS: r.watershed — flow accumulation…', flush=True)",
-            "gs.run_command('r.watershed', flags='s', elevation='filled',",
-            "               accumulation='accum', drainage='drain', overwrite=True)",
+            "# ── r.watershed — accumulation + drainage + basins ──────────",
+            "# -a: positive accumulation values; -b: beautify flat areas.",
+            "# basin output drives the clickable polygons in Step 2 section 4.",
+            "print('GRASS: r.watershed — flow accumulation + basins…', flush=True)",
+            f"gs.run_command('r.watershed', flags='ab', elevation='filled',",
+            f"               threshold={threshold},",
+            "               accumulation='accum', drainage='drain',",
+            "               basin='basins', overwrite=True)",
+            "",
+            "# ── r.relief — shaded relief ────────────────────────────────",
+            "print('GRASS: r.relief — computing shaded relief…', flush=True)",
+            f"gs.run_command('r.relief', input='filled', output='relief',",
+            f"               zscale={zscale}, overwrite=True)",
+            "",
+            "# ── r.colors — apply hypsometric tint to filled DEM ────────",
+            "print('GRASS: r.colors — applying elevation colour table…', flush=True)",
+            "gs.run_command('r.colors', map='filled', color='elevation', flags='e')",
+            "",
+            "# ── r.shade — composite elevation over relief ───────────────",
+            "print('GRASS: r.shade — compositing shaded relief…', flush=True)",
+            "gs.run_command('r.shade', shade='relief', color='filled',",
+            "               output='shaded_relief', brighten=30, overwrite=True)",
+            "",
+            "# ── r.to.vect — convert basins to vector ───────────────────",
+            "# No -s (smooth) flag: adjacent basins share exact raster-edge",
+            "# boundaries, avoiding tiny inter-polygon gaps when merging.",
+            "print('GRASS: r.to.vect — vectorising basins…', flush=True)",
+            "gs.run_command('r.to.vect', input='basins',",
+            "               output='basins_vect', type='area', overwrite=True)",
             "",
             "# ── Export results as GeoTIFF ────────────────────────────────",
             "print('GRASS: exporting rasters…', flush=True)",
@@ -115,14 +157,39 @@ class FillWorker(BaseWorker):
             "               format='GTiff', type='Int16', nodata='-32768',",
             "               createopt='COMPRESS=LZW', overwrite=True)",
             "",
-            "# accum: Float64 (default GRASS type for accumulation)",
+            "# accum: Float64 (positive accumulation via -a flag)",
             f"gs.run_command('r.out.gdal', input='accum', output={repr(accum_path)},",
             "               format='GTiff', createopt='COMPRESS=LZW', overwrite=True)",
             "",
-            "# drain: Int16 signed (negative values = streams), used by r.water.outlet",
+            "# drain: Int16 signed, used by r.water.outlet",
             f"gs.run_command('r.out.gdal', input='drain', output={repr(drain_ws_path)},",
             "               format='GTiff', type='Int16', nodata='-32768',",
             "               createopt='COMPRESS=LZW', overwrite=True)",
+            "",
+            "# basins: auto-delineated watershed boundaries from r.watershed",
+            f"gs.run_command('r.out.gdal', input='basins', output={repr(basins_path)},",
+            "               format='GTiff', type='Int32',",
+            "               createopt='COMPRESS=LZW', overwrite=True)",
+            "",
+            "# relief: shaded relief greyscale",
+            f"gs.run_command('r.out.gdal', input='relief', output={repr(relief_path)},",
+            "               format='GTiff', createopt='COMPRESS=LZW', overwrite=True)",
+            "",
+            "# shaded_relief: extract RGB from GRASS colour table for 3-band export",
+            "gs.mapcalc('shaded_r = r#shaded_relief', overwrite=True)",
+            "gs.mapcalc('shaded_g = g#shaded_relief', overwrite=True)",
+            "gs.mapcalc('shaded_b = b#shaded_relief', overwrite=True)",
+            f"gs.run_command('r.out.gdal', input='shaded_r', output={repr(shaded_r_path)},",
+            "               format='GTiff', type='Byte', createopt='COMPRESS=LZW', overwrite=True)",
+            f"gs.run_command('r.out.gdal', input='shaded_g', output={repr(shaded_g_path)},",
+            "               format='GTiff', type='Byte', createopt='COMPRESS=LZW', overwrite=True)",
+            f"gs.run_command('r.out.gdal', input='shaded_b', output={repr(shaded_b_path)},",
+            "               format='GTiff', type='Byte', createopt='COMPRESS=LZW', overwrite=True)",
+            "",
+            "# basins vector as GeoPackage",
+            "print('GRASS: exporting basin vectors…', flush=True)",
+            f"gs.run_command('v.out.ogr', input='basins_vect', output={repr(basins_gpkg)},",
+            "               format='GPKG', overwrite=True)",
             "",
             "print('GRASS: done', flush=True)",
         ]
@@ -152,7 +219,8 @@ class FillWorker(BaseWorker):
 
         self.log_message.emit(f"Launching GRASS GIS {grass_bin} (EPSG:{epsg})…")
         self.log_message.emit(f"  Input DEM: {os.path.basename(in_path)}")
-        self.log_message.emit("  Tools: r.fill.dir + r.watershed")
+        self.log_message.emit(f"  Threshold: {threshold} cells")
+        self.log_message.emit("  Tools: r.fill.dir + r.watershed + r.relief + r.shade + r.to.vect")
         self.progress.emit(5)
 
         # ── Run GRASS session ─────────────────────────────────────────────
@@ -166,16 +234,36 @@ class FillWorker(BaseWorker):
             )
 
             for raw_line in proc.stdout:
-                line = raw_line.rstrip()
+                line = raw_line.rstrip('\n')
                 if not line:
+                    continue
+                # GRASS progress: lines with \r contain terminal progress updates
+                # Split on \r and only log the last segment (most recent %)
+                if '\r' in line:
+                    parts = line.split('\r')
+                    line = parts[-1].strip()
+                    if not line:
+                        continue
+                    # Skip noisy percentage-only lines (e.g. " 45%")
+                    stripped = line.rstrip('%').strip()
+                    if stripped.replace('.', '', 1).isdigit():
+                        continue
+                # Suppress known non-fatal GDAL/GRASS messages
+                if any(pat in line for pat in _SUPPRESS_PATTERNS):
                     continue
                 self.log_message.emit(line)
                 # Update progress based on key milestone messages
                 low = line.lower()
                 if "r.fill.dir" in low:
-                    self.progress.emit(20)
+                    self.progress.emit(15)
                 elif "r.watershed" in low:
+                    self.progress.emit(35)
+                elif "r.relief" in low:
                     self.progress.emit(55)
+                elif "r.shade" in low:
+                    self.progress.emit(65)
+                elif "r.to.vect" in low:
+                    self.progress.emit(70)
                 elif "exporting" in low:
                     self.progress.emit(80)
                 elif "done" in low:
@@ -194,12 +282,32 @@ class FillWorker(BaseWorker):
             )
             return
 
-        # ── Verify all outputs exist ──────────────────────────────────────
+        # ── Merge R/G/B band exports into 3-band RGB shaded_relief ──────
+        rgb_parts = [shaded_r_path, shaded_g_path, shaded_b_path]
+        if all(os.path.exists(p) for p in rgb_parts):
+            with rasterio.open(shaded_r_path) as r_src:
+                r_band = r_src.read(1)
+                profile = r_src.profile.copy()
+            with rasterio.open(shaded_g_path) as g_src:
+                g_band = g_src.read(1)
+            with rasterio.open(shaded_b_path) as b_src:
+                b_band = b_src.read(1)
+            profile.update(count=3, dtype='uint8', nodata=None)
+            with rasterio.open(shaded_path, 'w', **profile) as dst:
+                dst.write(r_band, 1)
+                dst.write(g_band, 2)
+                dst.write(b_band, 3)
+            for p in rgb_parts:
+                os.unlink(p)
+            self.log_message.emit("Merged R/G/B → 3-band shaded_relief.tif")
+
+        # ── Verify core outputs exist ─────────────────────────────────────
         outputs = {
-            "filled_dem_path": filled_path,
-            "fdir_path":       fdir_path,
-            "accum_path":      accum_path,
-            "drain_ws_path":   drain_ws_path,
+            "filled_dem_path":    filled_path,
+            "fdir_path":          fdir_path,
+            "accum_path":         accum_path,
+            "drain_ws_path":      drain_ws_path,
+            "basins_path":        basins_path,
         }
         missing = [k for k, p in outputs.items() if not os.path.exists(p)]
         if missing:
@@ -209,10 +317,25 @@ class FillWorker(BaseWorker):
             )
             return
 
+        # Optional outputs (non-fatal if missing)
+        if os.path.exists(relief_path):
+            outputs["relief_path"] = relief_path
+        if os.path.exists(shaded_path):
+            outputs["shaded_relief_path"] = shaded_path
+        if os.path.exists(basins_gpkg):
+            outputs["basins_gpkg_path"] = basins_gpkg
+
         self.progress.emit(100)
-        self.log_message.emit("✅ GRASS fill + flow routing complete.")
-        self.log_message.emit(f"  Filled DEM   → {os.path.basename(filled_path)}")
-        self.log_message.emit(f"  Flow dir     → {os.path.basename(fdir_path)} (GRASS 1-8)")
-        self.log_message.emit(f"  Accumulation → {os.path.basename(accum_path)}")
-        self.log_message.emit(f"  Drainage     → {os.path.basename(drain_ws_path)} (for watershed)")
+        self.log_message.emit("GRASS processing complete.")
+        self.log_message.emit(f"  Filled DEM      -> {os.path.basename(filled_path)}")
+        self.log_message.emit(f"  Flow dir        -> {os.path.basename(fdir_path)} (GRASS 1-8)")
+        self.log_message.emit(f"  Accumulation    -> {os.path.basename(accum_path)}")
+        self.log_message.emit(f"  Drainage        -> {os.path.basename(drain_ws_path)}")
+        self.log_message.emit(f"  Basins          -> {os.path.basename(basins_path)} (threshold={threshold})")
+        if os.path.exists(relief_path):
+            self.log_message.emit(f"  Relief          -> {os.path.basename(relief_path)} (r.relief zscale={zscale})")
+        if os.path.exists(shaded_path):
+            self.log_message.emit(f"  Shaded relief   -> {os.path.basename(shaded_path)} (r.shade brighten=30)")
+        if os.path.exists(basins_gpkg):
+            self.log_message.emit(f"  Basins (vector) -> {os.path.basename(basins_gpkg)}")
         self.finished.emit(outputs)

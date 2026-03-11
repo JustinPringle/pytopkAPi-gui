@@ -14,7 +14,12 @@
       "Bash(pip *)",
       "Bash(mkdir *)",
       "Bash(ls *)",
-      "Bash(cat *)"
+      "Bash(cat *)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(~/.pyenvs/pytopkapi-gui/bin/python:*)",
+      "Bash(do echo:*)",
+      "Bash(grep:*)"
     ],
     "deny": [
       "WebFetch",
